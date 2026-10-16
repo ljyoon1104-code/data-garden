@@ -120,6 +120,7 @@ export interface WorkError {
   remedy?: string;
 }
 export interface Interpretation {
+  origin?: "user" | "example";
   id: ID;
   target: { kind: "analysis" | "graph" | "project"; id: ID };
   text: string;
@@ -181,6 +182,8 @@ export interface HistoryEntry {
 export type Menu = "data" | "prepare" | "visualize" | "analyze" | "results";
 /** UI preferences stay separate from the serializable project document. */
 export interface ViewState {
+  resultDetail?: import('./results').ResultTarget | null;
+  report?: import('./results').ReportSelection;
   menu: Menu;
   analysisFamily?: "regression" | "clustering" | "experiment" | "association";
   associationSelection?: { current: ID | null; comparison: ID | null };

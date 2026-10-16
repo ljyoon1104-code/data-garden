@@ -189,6 +189,9 @@ export function useProjects() {
         "cluster-axes",
         "association-select",
         "association-view",
+        "graph-select",
+        "result-detail",
+        "report-selection",
       ].includes(action.type)
     )
       return;

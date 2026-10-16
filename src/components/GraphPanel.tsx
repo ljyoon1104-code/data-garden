@@ -1087,7 +1087,7 @@ function Comparison({
     </section>
   );
 }
-export function GraphPanel({ control: c }: { control: Control }) {
+export function GraphPanel({ control: c, writable=true }: { control: Control; writable?:boolean }) {
   const g = c.draft,
     s = g?.visual,
     comparison = c.state.project.graphs.find(
@@ -1102,7 +1102,7 @@ export function GraphPanel({ control: c }: { control: Control }) {
   return (
     <section className="graphs-panel">
       <div className="graph-toolbar">
-        <button className="primary-button" onClick={c.create}>
+        <button disabled={!writable} className="primary-button" onClick={c.create}>
           그래프 만들기
         </button>
         <label>
@@ -1143,15 +1143,15 @@ export function GraphPanel({ control: c }: { control: Control }) {
       {g ? (
         <>
           <div className="graph-toolbar">
-            <button disabled={!s || !c.result || c.task.busy} onClick={c.save}>
+            <button disabled={!writable || !s || !c.result || c.task.busy} onClick={c.save}>
               그래프 저장
             </button>
-            <button onClick={() => c.clone(false)}>
+            <button disabled={!writable} onClick={() => c.clone(false)}>
               {s ? "그래프 복제" : "설정 보완"}
             </button>
             <button
               disabled={
-                !c.state.project.graphs.some((saved) => saved.id === g.id)
+                !writable || !c.state.project.graphs.some((saved) => saved.id === g.id)
               }
               onClick={c.remove}
             >
@@ -1176,7 +1176,7 @@ export function GraphPanel({ control: c }: { control: Control }) {
                 이 그래프는 당시 버전을 유지합니다. 새 버전으로 복제하면 자료
                 범위를 전체로 초기화하며 과거 그래프는 보존합니다.
               </p>
-              <button onClick={() => c.clone(true)}>
+              <button disabled={!writable} onClick={() => c.clone(true)}>
                 현재 자료 버전으로 복제하여 다시 그리기
               </button>
             </div>

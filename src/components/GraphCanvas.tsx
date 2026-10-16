@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ChartDownload } from './ChartDownload';
 import type {
   ClusteringResult,
   ClusterDetail,
@@ -340,12 +341,12 @@ export function GraphCanvas({
     };
   }, [graph, result, table, group, select]);
   return (
-    <div
+    <><div
       ref={ref}
       className="graph-canvas"
       role="img"
       aria-label={`${graph.visual?.name} ${group || ""} · ${graphLabels[graph.kind]} · 아래 집계표로 모든 표시값과 원자료에 접근할 수 있습니다.`}
-    />
+    /><ChartDownload node={ref} title={graph.visual?.name??'그래프'} context={[`자료 ${graph.source.datasetId} · 버전 ${graph.source.versionId}`,`범위 ${graph.visual?.scope.kind} · 전체 ${result.total}행 중 ${result.used}행 사용 · 집계 ${graph.visual?.aggregate}`,`표시 ${result.displayed} · 표본 ${result.sampled?'사용':'아님'} · 단위 ${graph.visual?.unit||'별도 지정 없음'}`,group?`현재 집단 패널: ${group} (전체 집단 아님)`:`현재 그림 · ${result.groups.length}개 집단`,...result.warnings]}/></>
   );
 }
 
@@ -354,9 +355,11 @@ export function RegressionCanvas({
   rows,
   seed,
   select,
+  context=[],
 }: {
   rows: EvaluationRow[];
   seed: number;
+  context?: string[];
   select: (id: string) => void;
 }) {
   const actual = useRef<HTMLDivElement>(null),
@@ -454,6 +457,7 @@ export function RegressionCanvas({
           aria-label="실제값과 예측값 산점도. 아래 평가 표에서 행 선택 가능"
           ref={actual}
         />
+        <ChartDownload node={actual} title="회귀 실제값과 예측값" context={[...context,`전체 평가 ${rows.length}행 · 표시 ${Math.min(1000,rows.length)}점 · ${rows.length>1000?'표시 표본':'전체 평가점'}`,`고정 표시 seed ${seed} · 현재 선택 모델의 저장된 평가 결과`]}/>
       </figure>
       <figure>
         <figcaption>예측값과 잔차 · 점선은 잔차 0</figcaption>
@@ -463,6 +467,7 @@ export function RegressionCanvas({
           aria-label="예측값과 잔차 그래프. 아래 평가 표에서 행 선택 가능"
           ref={residual}
         />
+        <ChartDownload node={residual} title="회귀 예측값과 잔차" context={[`전체 평가 ${rows.length}행 · 표시 ${Math.min(1000,rows.length)}점 · ${rows.length>1000?'표시 표본':'전체 평가점'}`,`고정 표시 seed ${seed} · 잔차=실제−예측`]}/>
       </figure>
     </div>
   );
@@ -471,7 +476,7 @@ export function RegressionCanvas({
 export function ClusteringCanvas(
   props:
     | { mode: "metrics"; result: ClusteringResult }
-    | { mode: "scatter"; detail: ClusterDetail; select: (id: string) => void }
+    | { mode: "scatter"; detail: ClusterDetail; select: (id: string) => void; context?:string[] }
     | {
         mode: "experiment";
         points: { id: string; x: number; y: number }[];
@@ -614,6 +619,7 @@ export function ClusteringCanvas(
         role="img"
         aria-label="군집 그래프. 아래 표에서 정확한 값 확인 및 점 선택 가능"
       />
+      <ChartDownload node={node} title={props.mode==='metrics'?'군집 수 비교':props.mode==='scatter'?'군집 분포':'직접 점 실험'} context={props.mode==='metrics'?[`자료 ${props.result.source.datasetId} · 버전 ${props.result.source.versionId}`,`전체 분석 ${props.result.rowIds.length}행`,...props.result.candidates.map(c=>`k=${c.k} 실루엣 ${c.silhouette?.mode??'계산 불가'}`)]:props.mode==='scatter'?[...(props.context??[]),`전체 ${props.detail.total}행 · 표시 ${props.detail.displayed}점 · ${props.detail.displayed<props.detail.total?'표시 표본':'전체 표시'}`,'현재 표시 축·선택한 계산 단계의 고정 결과']:['직접 입력한 임시 실험 점']}/>
     </figure>
   );
 }

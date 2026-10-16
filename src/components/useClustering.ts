@@ -21,6 +21,7 @@ import { defaultTableView } from "../domain/table";
 export function useClustering(
   state: WorkspaceState,
   dispatch: (a: WorkspaceAction) => void,
+  writable = true,
 ) {
   const { project, view } = state,
     { version, dataset } = getSelection(state);
@@ -127,6 +128,7 @@ export function useClustering(
       },
     });
   const run = (requested: AnalysisConfig | null = config) => {
+    if (!writable) return;
     if (!requested?.clustering) return;
     cancel();
     setError("");
@@ -285,6 +287,7 @@ export function useClustering(
     dispatch({ type: "analysis-delete", id });
   };
   return {
+    writable,
     state,
     dispatch,
     config: config as ClusteringConfig | null,

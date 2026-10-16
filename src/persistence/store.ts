@@ -1,10 +1,10 @@
 import type { WorkspaceState } from "../state/workspace";
-import { validateWorkspace, RESTORE_CELLS } from "./format";
+import { MAX_PRESERVED_CELLS as RESTORE_CELLS } from "../domain/limits";
 import { WorkerRunner } from "../workers/client";
 
 /** Validation may recalculate saved processing bases. Keep it off the browser UI thread. */
 async function validateStored(input: unknown): Promise<WorkspaceState> {
-  if (typeof Worker === "undefined") return validateWorkspace(input);
+  if (typeof Worker === "undefined") return (await import("./format")).validateWorkspace(input);
   return new Promise((resolve, reject) => {
     const runner = new WorkerRunner("stored-project-validation");
     try {

@@ -770,12 +770,11 @@ export function defaultAssociationView(): AssociationView {
     candidatePage: 0,
   };
 }
-export function associationDetail(
-  table: DeepReadonly<TableData>,
+export function queryAssociationRules(
   result: DeepReadonly<AssociationResult>,
   query: AssociationView,
-): AssociationDetail {
-  limit(result.rules.length * (2 + query.antecedent.length + query.consequent.length) * result.maxLength + result.prepared.transactions.length * (2 * result.maxLength) + table.rows.length <= associationLimits.visits, "상세 조회 3,000만 방문");
+) {
+  limit(result.rules.length * (2 + query.antecedent.length + query.consequent.length) * result.maxLength <= associationLimits.visits, "규칙 조회 3,000만 방문");
   const dictionary = new Map(result.prepared.items.map((i) => [i.id, i]));
   const side = (items: readonly string[], selected: string[], text: string) =>
     (!text || items.some((id) => dictionary.get(id)!.label.includes(text))) &&
@@ -799,6 +798,15 @@ export function associationDetail(
       (metric(a) - metric(b)) * (query.direction === "asc" ? 1 : -1) ||
       cmp(a.id, b.id),
   );
+  return rules;
+}
+export function associationDetail(
+  table: DeepReadonly<TableData>,
+  result: DeepReadonly<AssociationResult>,
+  query: AssociationView,
+): AssociationDetail {
+  limit(result.rules.length * (2 + query.antecedent.length + query.consequent.length) * result.maxLength + result.prepared.transactions.length * (2 * result.maxLength) + table.rows.length <= associationLimits.visits, "상세 조회 3,000만 방문");
+  const rules = queryAssociationRules(result,query);
   const rule = result.rules.find((r) => r.id === query.ruleId);
   const counts = rule
     ? {

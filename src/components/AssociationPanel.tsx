@@ -15,7 +15,7 @@ import {
   percentFraction,
   supportCount,
 } from "../domain/association";
-import { getResultFreshness } from "../domain/model";
+import { analysisFreshness } from "../domain/results";
 import { resolveVersion } from "../domain/processing";
 import { useTask } from "../workers/useTask";
 import { ErrorNotice, TaskStatus } from "./DataControls";
@@ -717,11 +717,7 @@ function Result({
   const label = (ids: readonly string[]) =>
     "{" + ids.map((id) => names.get(id)).join(", ") + "}";
   const rule = r.rules.find((rule) => rule.id === q.ruleId);
-  const freshness = getResultFreshness(
-    record,
-    c.state.project.selection,
-    c.config,
-  );
+  const freshness = analysisFreshness(c.state.project, record);
   const level = r.levels.find((l) => l.length === q.level);
   return (
     <section className="association-card">

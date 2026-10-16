@@ -18,7 +18,7 @@ import {
   buildRegressionPlan,
   comparableRegression,
 } from "../domain/regression";
-import { getResultFreshness } from "../domain/model";
+import { analysisFreshness } from "../domain/results";
 import { modelLabels } from "../domain/regression-models";
 import { resolveVersion } from "../domain/processing";
 import { useTask } from "../workers/useTask";
@@ -396,7 +396,7 @@ export function RegressionPanel({
   const record = c.selected,
     result = record?.regression;
   const freshness = record
-    ? getResultFreshness(record, c.config?.source ?? null, c.config)
+    ? analysisFreshness(c.state.project, record)
     : null;
   return (
     <section className="regression-panel">
@@ -519,7 +519,7 @@ export function RegressionPanel({
           )}
           <div className="data-actions">
             <button
-              disabled={!record.configSnapshot.regression || c.busy}
+              disabled={!c.writable || !record.configSnapshot.regression || c.busy}
               onClick={() =>
                 c.run(structuredClone(record.configSnapshot) as AnalysisConfig)
               }
@@ -527,12 +527,12 @@ export function RegressionPanel({
               당시 조건으로 다시 실행
             </button>
             <button
-              disabled={!c.config || !record.configSnapshot.regression}
+              disabled={!c.writable || !c.config || !record.configSnapshot.regression}
               onClick={() => c.cloneCurrent(record)}
             >
               현재 버전으로 조건 복제
             </button>
-            <button onClick={() => c.remove(record.id)}>이 기록 삭제</button>
+            <button disabled={!c.writable} onClick={() => c.remove(record.id)}>이 기록 삭제</button>
           </div>
           {record.error && <ErrorNotice error={record.error} />}
           {!record.configSnapshot.regression && (
@@ -749,6 +749,7 @@ function RegressionDetails({
           </details>
           <Suspense fallback={<p>오차 그래프를 여는 중…</p>}>
             <RegressionCanvas
+              context={[`자료 ${r.source.datasetId} · 버전 ${r.source.versionId}`,`모델 ${m.kind} · 목표 ${r.target.name} · 특성 ${r.features.map(f=>f.name).join(", ")}`,`평가 분할 ${JSON.stringify(r.split)}`]}
               rows={m.rows}
               seed={r.sampling.seed}
               select={select}

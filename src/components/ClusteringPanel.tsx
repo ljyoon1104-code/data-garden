@@ -20,7 +20,7 @@ import {
   clusteringConfig,
   defaultClustering,
 } from "../domain/clustering";
-import { getResultFreshness } from "../domain/model";
+import { analysisFreshness } from "../domain/results";
 import { resolveVersion } from "../domain/processing";
 import { useTask } from "../workers/useTask";
 import { TaskStatus, ErrorNotice } from "./DataControls";
@@ -359,7 +359,7 @@ export function ClusteringPanel({
   const record = c.selected,
     records = c.state.project.analyses.filter((a) => a.kind === "clustering");
   const freshness = record
-    ? getResultFreshness(record, c.config?.source ?? null, c.config)
+    ? analysisFreshness(c.state.project, record)
     : null;
   return (
     <section className="cluster-panel">
@@ -449,11 +449,11 @@ export function ClusteringPanel({
                   ? "재분석 필요"
                   : "완료 결과 없음"}
             </strong>
-            <button onClick={() => c.remove(record.id)}>
+            <button disabled={!c.writable} onClick={() => c.remove(record.id)}>
               이 군집 기록 삭제
             </button>
             <button
-              disabled={!record.configSnapshot.clustering}
+              disabled={!c.writable || !record.configSnapshot.clustering}
               onClick={() => c.cloneCurrent(record)}
             >
               현재 자료로 조건 복사
@@ -906,7 +906,7 @@ function ClusterResultView({
           {detail && (
             <>
               <Suspense fallback={<p>산점도를 여는 중…</p>}>
-                <Plot mode="scatter" detail={detail} select={select} />
+                <Plot mode="scatter" detail={detail} select={select} context={[`자료 ${r.source.datasetId} · 버전 ${r.source.versionId}`,`특성 ${r.features.map(f=>f.name).join(", ")} · 전처리 ${JSON.stringify(r.basis).slice(0,600)}`]} />
               </Suspense>
               <p>
                 전체 입력 {detail.total}행 · 표시 {detail.displayed}점 (최대

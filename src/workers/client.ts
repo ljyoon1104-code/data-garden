@@ -1,11 +1,18 @@
 import { JobGate } from "./protocol";
 import type { DataTask, DataTaskResult, WorkerResponse } from "./protocol";
 const running = new Set<WorkerRunner>();
+const externalWork = new Set<() => void>();
+export function registerExternalWork(cancel: () => void) {
+  externalWork.add(cancel);
+  return () => externalWork.delete(cancel);
+}
 export function cancelAllWorkers() {
+  for (const cancel of [...externalWork]) cancel();
+  externalWork.clear();
   for (const runner of [...running]) runner.cancel();
 }
 export function hasRunningWorkers() {
-  return running.size > 0;
+  return running.size > 0 || externalWork.size > 0;
 }
 
 /** A dedicated worker is terminated on cancellation: synchronous XLSX parsing is

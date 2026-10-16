@@ -71,4 +71,5 @@ self.addEventListener('fetch',event=>{
 export default defineConfig({
   plugins: [react(), offlineBundle()],
   base: "./",
+  worker: { format: 'es' },
 });

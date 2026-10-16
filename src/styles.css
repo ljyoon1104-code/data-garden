@@ -2917,3 +2917,23 @@ summary {
 .association-panel .table-pagination { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:14px 0; }
 .association-panel .association-evidence table { font-size:14px; }
 .association-panel .table-scroll table { min-width:580px; }
+
+/* Result review and portable outputs */
+.results-hub,.output-panel,.report-panel,.learning-panel{min-width:0;overflow-wrap:anywhere}
+.output-panel,.report-panel,.learning-panel{background:var(--surface,#fff);border:1px solid #d3ded8;border-radius:12px;padding:16px;margin:12px 0}
+.learning-panel{margin:12px 24px}.learning-panel details{padding:10px 0;border-bottom:1px solid #e2e8e4}
+.result-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px}
+.result-cards article,.interpretations article{border:1px solid #d7e2dc;padding:16px;border-radius:10px;background:#fff;min-width:0}
+.results-hub pre,.output-panel pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;font-size:13px}
+.results-hub .form-grid,.output-panel .form-grid{display:flex;gap:12px;flex-wrap:wrap}
+.results-hub label,.output-panel label,.report-panel label{display:block;margin:8px 0}
+.results-hub textarea{display:block;width:100%;min-height:100px;resize:vertical}
+.interpretation-text{white-space:pre-wrap;line-height:1.7}.interpretations{margin:20px 0}.interpretations article{margin:10px 0}
+.result-detail{border-top:2px solid #477f64;margin-top:24px;padding-top:16px}.report-preview{width:100%;height:620px;border:1px solid #ccd9d0;background:white}
+.report-panel li{margin:8px 0}.report-panel button,.output-panel button,.interpretations button{margin:4px}
+@media(max-width:600px){.learning-panel{margin:8px}.results-hub .form-grid{display:block}.report-preview{height:440px}.result-cards{display:block}.result-cards article{margin:8px 0}.results-hub input,.results-hub select{max-width:100%}}
+.results-hub button,.output-panel button,.learning-panel button,.chart-download button{min-height:36px;padding:7px 12px;border:1px solid #bacfc3;border-radius:7px;background:#f6faf7;color:#244e3d;cursor:pointer;white-space:normal;line-height:1.4}
+.results-hub button:hover,.output-panel button:hover,.learning-panel button:hover{background:#e7f1eb}
+.results-hub button:disabled,.output-panel button:disabled,.learning-panel button:disabled{opacity:.55;cursor:default}
+.results-hub input:not([type=checkbox]),.results-hub select,.output-panel select{min-height:36px;padding:6px;border:1px solid #b9cdc1;border-radius:6px}
+.chart-download{margin:10px 0}.results-hub button:focus-visible,.output-panel button:focus-visible{outline:3px solid #b77825;outline-offset:2px}

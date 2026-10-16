@@ -9,7 +9,7 @@ import { calculateGraph, graphRows } from "../domain/graphs";
 /// <reference lib="webworker" />
 import type { WorkerRequest, WorkerResponse, DataTaskResult } from "./protocol";
 import { previewWrangling, commitWrangling } from "../domain/wrangling";
-import { parseBytes, registerImport, limits } from "../data/import";
+
 import { editVersion, inspectTable } from "../domain/table";
 import {
   readBackup,
@@ -38,6 +38,17 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     let result: DataTaskResult;
     const task = request.task;
     switch (task.kind) {
+      case 'report-prepare': {const {prepareReport}=await import('../domain/report');result={kind:task.kind,report:prepareReport(task.input,progress)};break;}
+      case 'report-html': {progress('그림과 표를 단일 HTML로 구성 중…');const {reportHtml}=await import('../domain/report');result={kind:task.kind,html:reportHtml(task.report)};break;}
+      case 'output-preview': {
+        const {prepareOutput}=await import('../domain/export');
+        result={kind:task.kind,book:prepareOutput(task.input,progress)};break;
+      }
+      case 'output-file': {
+        progress('고정한 표를 파일로 직렬화 중…');
+        const {serializeOutput}=await import('../domain/export');
+        result={kind:task.kind,files:await serializeOutput(task.book,task.format,task.tableIndex,task.safe)};break;
+      }
       case "association-preview":
         result = {
           kind: task.kind,
@@ -161,6 +172,7 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         };
         break;
       case "parse": {
+        const {parseBytes,limits}=await import("../data/import");
         if (task.file.size > limits.bytes)
           throw new Error("파일이 20MB를 넘습니다. 나누어 불러오세요.");
         progress("기기에서 파일을 읽는 중…");
@@ -172,13 +184,15 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         };
         break;
       }
-      case "register":
+      case "register": {
+        const {registerImport}=await import("../data/import");
         progress("전체 행의 자료형을 검증하고 원본·버전을 준비하는 중…");
         result = {
           kind: "register",
           dataset: registerImport(task.parsed, task.columns, task.acknowledged),
         };
         break;
+      }
       case "edit":
         progress("변경 값을 검증하고 새 버전을 준비하는 중…");
         result = {

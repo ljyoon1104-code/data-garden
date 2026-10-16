@@ -16,11 +16,12 @@ const server = createServer(async (req, res) => {
     let path = decodeURIComponent(
       new URL(req.url, "http://localhost").pathname,
     );
-    if (path === "/data") {
-      res.writeHead(302, { Location: "/data/" }).end();
+    const mount=["/data", "/data-garden", "/verification-10"].find(p=>path===p||path.startsWith(p+"/"));
+    if (mount && path === mount) {
+      res.writeHead(302, { Location: mount+"/" }).end();
       return;
     }
-    if (path.startsWith("/data/")) path = path.slice(5);
+    if (mount) path = path.slice(mount.length);
     if (path.endsWith("/")) path += "index.html";
     const file = resolve(root, "." + path);
     if (!file.startsWith(root + "\\") && !file.startsWith(root + "/"))

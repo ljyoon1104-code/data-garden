@@ -1,3 +1,4 @@
+import { validateResultState } from '../domain/results';
 import {
   validateAssociationConfig,
   validateAssociationRecord,
@@ -22,16 +23,14 @@ import { snapshot } from "../domain/model";
 import type { AnalysisConfig, VersionRef } from "../domain/types";
 import type { WorkspaceState } from "../state/workspace";
 
-export const FORMAT = "data-garden-project";
+import { FORMAT } from "./backup";
+import type { Backup } from "./backup";
+export { FORMAT, makeBackup } from "./backup";
+export type { Backup } from "./backup";
 export const RESTORE_BYTES = 80 * 1024 * 1024;
 import { MAX_PRESERVED_CELLS } from "../domain/limits";
 export const RESTORE_CELLS = MAX_PRESERVED_CELLS;
-export interface Backup {
-  format: typeof FORMAT;
-  formatVersion: 1;
-  exportedAt: string;
-  workspace: WorkspaceState;
-}
+
 type Check = (value: unknown, path: string) => void;
 const fail = (path: string, reason: string): never => {
   throw new Error(`${path}: ${reason}`);
@@ -818,18 +817,12 @@ export function validateWorkspace(input: unknown): WorkspaceState {
     original: snapshot(d.original),
     versions: d.versions.map((v) => snapshot(v)),
   }));
+  validateResultState(p,data.view);
   p.operations = p.operations.map((o) => snapshot(o));
   return data;
 }
 
-export function makeBackup(workspace: WorkspaceState): Backup {
-  return {
-    format: FORMAT,
-    formatVersion: 1,
-    exportedAt: new Date().toISOString(),
-    workspace: structuredClone(workspace),
-  };
-}
+
 export function readBackup(text: string, asCopy = false): WorkspaceState {
   if (new Blob([text]).size > RESTORE_BYTES)
     throw new Error(

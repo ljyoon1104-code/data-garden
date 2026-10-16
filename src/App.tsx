@@ -1,4 +1,8 @@
 import { useAssociation } from "./components/useAssociation";
+import { ResultsHub } from './components/ResultsHub';
+import { LearningPanel } from './components/LearningPanel';
+import { OutputPanel } from './components/OutputPanel';
+import type { ResultTarget } from './domain/results';
 import {
   AssociationPanel,
   AssociationSettingsPanel,
@@ -103,17 +107,15 @@ export default function App() {
         busy={busy}
         setBusy={setBusy}
       />
+      <LearningPanel library={library} draft={draft} busy={busy} setBusy={setBusy}/>
       <fieldset className="workspace-guard" disabled={busy}>
-        {!library.writable ? (
-          <ReadOnlyAnalyses state={library.state} dispatch={library.dispatch} />
-        ) : (
           <Workspace
             key={library.state.project.id + ":" + library.epoch}
             state={library.state}
             dispatch={library.dispatch}
             setDraft={setDraft}
+            writable={library.writable}
           />
-        )}
       </fieldset>
     </>
   );
@@ -122,10 +124,12 @@ function Workspace({
   state,
   dispatch,
   setDraft,
+  writable,
 }: {
   state: WorkspaceState;
   dispatch: (action: WorkspaceAction) => void;
   setDraft: (draft: boolean) => void;
+  writable: boolean;
 }) {
   const { project, view } = state;
   const { dataset, version, attribute } = getSelection(state);
@@ -134,12 +138,13 @@ function Workspace({
   const preprocessing = usePreprocessing(state, dispatch);
   const wrangling = useWrangling(state, dispatch);
   const graphs = useGraphs(state, dispatch);
-  const regression = useRegression(state, dispatch);
-  const clustering = useClustering(state, dispatch);
-  const association = useAssociation(state, dispatch);
+  const regression = useRegression(state, dispatch, writable);
+  const clustering = useClustering(state, dispatch, writable);
+  const association = useAssociation(state, dispatch, writable);
   const experiment = usePointExperiment(clustering);
   const analysisFamily = view.analysisFamily ?? "regression";
   const [prepareFamily, setPrepareFamily] = useState("preprocess");
+  const [resultDraft,setResultDraft]=useState(false),[outputPending,setOutputPending]=useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<{
     datasetId: string;
@@ -149,6 +154,7 @@ function Workspace({
   useEffect(() => {
     setDraft(
       association.hasDraft ||
+        resultDraft || outputPending ||
         importOpen ||
         !!editTarget ||
         preprocessing.pending ||
@@ -165,6 +171,7 @@ function Workspace({
     graphs.dirty,
     experiment.dirty,
     association.hasDraft,
+    resultDraft, outputPending,
     setDraft,
   ]);
   const [inspectionState, setInspectionState] = useState<{
@@ -202,6 +209,7 @@ function Workspace({
   const setTableView = (patch: Partial<TableView>) =>
     dataset && dispatch({ type: "table-view", datasetId: dataset.id, patch });
   const openEdit = (target: EditTarget) => {
+    if (!writable) return;
     preprocessing.clear();
     wrangling.clear();
     if (dataset && version) {
@@ -215,6 +223,16 @@ function Workspace({
     editTarget.versionId === version?.id
       ? editTarget
       : null;
+  const openResult=(target:ResultTarget)=>{
+    if(resultDraft)return;
+    dispatch({type:'result-detail',target});
+    if(target.kind==='graph')graphs.open(target.id);
+    else {
+      const a=project.analyses.find(a=>a.id===target.id)!;
+      dispatch({type:'analysis-family',family:a.kind});
+      dispatch({type:a.kind==='regression'?'analysis-select':a.kind==='clustering'?'cluster-select':'association-select',id:a.id});
+    }
+  };
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main">
@@ -267,7 +285,7 @@ function Workspace({
               key={menu.id}
               aria-current={view.menu === menu.id ? "page" : undefined}
               className={`nav-item ${view.menu === menu.id ? "active" : ""}`}
-              onClick={() => dispatch({ type: "menu", menu: menu.id })}
+              onClick={() => {if(resultDraft && !window.confirm("진행 중인 출력 또는 저장하지 않은 해석·질문이 있습니다. 메뉴를 이동할까요?"))return;dispatch({ type: "menu", menu: menu.id });}}
             >
               <Icon name={menu.icon} />
               {menu.label}
@@ -298,10 +316,11 @@ function Workspace({
               </h1>
               <p>{currentMenu.detail}</p>
             </div>
-            <span className="stage-label">9단계 · 연관 규칙 탐구</span>
+            <span className="stage-label">탐구 · 해석 · 출력</span>
           </div>
           <div className="data-actions">
             <button
+              disabled={!writable}
               className="primary-button"
               onClick={() => {
                 preprocessing.clear();
@@ -324,8 +343,12 @@ function Workspace({
             />
           )}
           {inspectTask.busy && <TaskStatus {...inspectTask} />}
-          {view.menu === "visualize" && <GraphPanel control={graphs} />}
-          {(view.menu === "analyze" || view.menu === "results") && (
+          {view.menu === "data" && <OutputPanel state={state} onPending={setOutputPending}/>}
+          {view.menu === "visualize" && <GraphPanel control={graphs} writable={writable}/>}
+          {view.menu === 'results' && <ResultsHub state={state} dispatch={dispatch} writable={writable} onDraft={setResultDraft} onOpen={openResult}>
+            {view.resultDetail?.kind==='graph'?<GraphPanel control={graphs} writable={writable}/>:analysisFamily==='regression'?<RegressionPanel control={regression}/>:analysisFamily==='clustering'?<ClusteringPanel control={clustering}/>:<AssociationPanel control={association}/>}
+          </ResultsHub>}
+          {view.menu === "analyze" && (
             <>
               <label className="prepare-picker">
                 분석 영역
@@ -346,7 +369,7 @@ function Workspace({
                   <option value="regression">회귀 · 값 예측</option>
                   <option value="clustering">군집 · K-means</option>
                   <option value="association">연관 · 함께 나타나는 항목</option>
-                  <option value="experiment">직접 점 실험</option>
+                  <option value="experiment" disabled={!writable}>직접 점 실험</option>
                 </select>
               </label>
               {analysisFamily === "regression" ? (
@@ -369,7 +392,7 @@ function Workspace({
               <p>파일 열기로 내 자료를 불러오거나 샘플을 살펴보세요.</p>
               <button
                 className="primary-button"
-                onClick={() => dispatch({ type: "sample-add" })}
+                disabled={!writable} onClick={() => dispatch({ type: "sample-add" })}
               >
                 샘플 자료 살펴보기
                 <Icon name="arrow" />
@@ -464,6 +487,7 @@ function Workspace({
                   source={{ datasetId: dataset.id, versionId: version.id }}
                 />
                 <DataTable
+                  readOnly={!writable}
                   key={dataset.id}
                   dataset={dataset}
                   version={version}
@@ -503,7 +527,8 @@ function Workspace({
               <h2>설정 및 정보</h2>
               <span>{currentMenu.label}</span>
             </div>
-            {view.menu === "analyze" || view.menu === "results" ? (
+            <fieldset className="settings-guard" disabled={!writable}>
+            {view.menu === "analyze" ? (
               analysisFamily === "regression" ? (
                 <RegressionSettingsPanel control={regression} />
               ) : analysisFamily === "association" ? (
@@ -511,7 +536,7 @@ function Workspace({
               ) : (
                 <ClusteringSettingsPanel control={clustering} />
               )
-            ) : view.menu === "visualize" ? (
+            ) : view.menu === 'results' ? <p>목록에서 결과를 선택해 당시 근거·해석·출력을 확인하세요.</p> : view.menu === "visualize" ? (
               <GraphSettingsPanel control={graphs} />
             ) : view.menu === "prepare" && version ? (
               prepareFamily === "wrangle" ? (
@@ -540,6 +565,7 @@ function Workspace({
                 }
               />
             )}
+            </fieldset>
             <div className="session-note">
               <strong>내 기기에 자동 저장</strong>
               <p>
@@ -551,6 +577,7 @@ function Workspace({
               {dataset?.source.kind === "sample" && (
                 <button
                   className="text-button"
+                  disabled={!writable}
                   onClick={() => {
                     setEditTarget(null);
                     dispatch({ type: "sample-remove" });
@@ -565,90 +592,9 @@ function Workspace({
       </div>
       <footer className="app-footer">
         <span>데이터뜰 / 질문에서 발견으로</span>
-        <span>회귀·군집·연관 분석 · v0.9</span>
+        <span>탐구·해석·출력 · v1.0</span>
       </footer>
     </div>
   );
 }
 
-function ReadOnlyAnalyses({
-  state,
-  dispatch,
-}: {
-  state: WorkspaceState;
-  dispatch: (a: WorkspaceAction) => void;
-}) {
-  const association = useAssociation(state, dispatch, false),
-    regression = useRegression(state, dispatch),
-    clustering = useClustering(state, dispatch);
-  const family = state.view.analysisFamily ?? "regression";
-  return (
-    <main className="readonly-analyses">
-      <h1>데이터뜰 · 읽기 전용 결과 조회</h1>
-      <p>
-        이 탭의 조회 선택은 저장하지 않습니다. 실행·설정 변경·기록 삭제는 편집
-        중인 탭에서 하세요.
-      </p>
-      <label>
-        분석 영역
-        <select
-          aria-label="분석 영역"
-          value={family}
-          onChange={(e) =>
-            dispatch({
-              type: "analysis-family",
-              family: e.target.value as
-                "regression" | "clustering" | "association",
-            })
-          }
-        >
-          <option value="regression">회귀</option>
-          <option value="clustering">군집</option>
-          <option value="association">연관</option>
-        </select>
-      </label>
-      {family === "association" ? (
-        <AssociationPanel control={association} />
-      ) : (
-        <>
-          <label>
-            조회할 기록
-            <select
-              aria-label="조회할 기록"
-              value={
-                (family === "regression"
-                  ? state.view.currentAnalysisId
-                  : state.view.clusterSelection?.current) ?? ""
-              }
-              onChange={(e) =>
-                dispatch({
-                  type:
-                    family === "regression"
-                      ? "analysis-select"
-                      : "cluster-select",
-                  id: e.target.value || null,
-                })
-              }
-            >
-              <option value="">선택 안 함</option>
-              {state.project.analyses
-                .filter((a) => a.kind === family)
-                .map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.createdAt} · {a.status}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <fieldset disabled>
-            {family === "regression" ? (
-              <RegressionPanel control={regression} />
-            ) : (
-              <ClusteringPanel control={clustering} />
-            )}
-          </fieldset>
-        </>
-      )}
-    </main>
-  );
-}

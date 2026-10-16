@@ -8,6 +8,7 @@ assert(assets.some((f) => f.startsWith("data.worker-")));
 for (const file of assets)
   assert(cached.includes("assets/" + file), `Not precached: ${file}`);
 for (const name of [
+  "examples/dates.json", "examples/regression.json", "examples/clustering.json", "examples/association.json",
   "index.html",
   "manifest.webmanifest",
   "icon-192.png",
@@ -17,6 +18,8 @@ for (const name of [
 for (const base of [
   "https://school.github.io/",
   "https://school.github.io/data/",
+  "https://ljyoon1104-code.github.io/data-garden/",
+  "https://school.github.io/verification-10/",
 ]) {
   assert.equal(new URL(manifest.scope, base).href, base);
   assert.equal(new URL(manifest.start_url, base).href, base);
@@ -30,5 +33,5 @@ for (const base of [
     assert(new URL(src, base).href.startsWith(base), src);
 }
 console.log(
-  `Build verified: ${cached.length} precached files, all workers/assets, root + /data/ paths.`,
+  `Build verified: ${cached.length} precached files, all workers/assets, root + repository + arbitrary subpaths.`,
 );

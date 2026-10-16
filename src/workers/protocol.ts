@@ -53,6 +53,10 @@ import type {
 import type { WorkspaceState } from "../state/workspace";
 
 export type DataTask =
+  | {kind:'report-prepare'; input:import('../domain/report').ReportInput}
+  | {kind:'report-html'; report:import('../domain/report').PreparedReport}
+  | {kind:'output-preview'; input:import('../domain/export').ExportInput}
+  | {kind:'output-file'; book:import('../domain/export').OutputBook; format:'csv'|'xlsx'; tableIndex:number; safe:boolean}
   | {
       kind: "association-preview" | "association-run";
       input: AssociationInput;
@@ -137,6 +141,10 @@ export type DataTask =
   | { kind: "edit"; dataset: Dataset; versionId: string; edit: TableEdit }
   | { kind: "inspect"; table: DeepReadonly<TableData>; view: TableView };
 export type DataTaskResult =
+  | {kind:'report-prepare'; report:import('../domain/report').PreparedReport}
+  | {kind:'report-html'; html:string}
+  | {kind:'output-preview'; book:import('../domain/export').OutputBook}
+  | {kind:'output-file'; files:import('../domain/export').OutputFile[]}
   | { kind: "association-preview"; result: AssociationTransactions }
   | { kind: "association-run"; result: AssociationResult }
   | { kind: "association-detail"; result: AssociationDetail }

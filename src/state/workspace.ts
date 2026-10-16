@@ -1,4 +1,6 @@
 import { defaultAssociationView } from "../domain/association";
+import { cleanResultReferences, targetExists, validateResultState } from '../domain/results';
+import type { Interpretation } from '../domain/types';
 import { clusteringValidationBudget } from "../domain/clustering-validation";
 import { analysisConfigKey } from "../domain/clustering";
 import type { AnalysisConfig, AnalysisRecord } from "../domain/types";
@@ -60,6 +62,10 @@ export function createWorkspace(withSample = true): WorkspaceState {
   };
 }
 export type WorkspaceAction =
+  | { type: 'interpretation-save'; interpretation: Interpretation }
+  | { type: 'interpretation-delete'; id: string }
+  | { type: 'report-selection'; report: NonNullable<ViewState['report']> }
+  | { type: 'result-detail'; target: ViewState['resultDetail'] }
   | {
       type: "analysis-family";
       family: NonNullable<ViewState["analysisFamily"]>;
@@ -117,6 +123,33 @@ function reduceWorkspace(
 ): WorkspaceState {
   const { project, view } = state;
   switch (action.type) {
+    case 'result-detail':
+      return !action.target || targetExists(project, action.target) ? {...state,view:{...view,resultDetail:action.target}} : state;
+    case 'report-selection': {
+      const next = {...view,report:structuredClone(action.report)};
+      validateResultState(project,next);
+      return {...state,view:next};
+    }
+    case 'interpretation-save': {
+      const i = action.interpretation;
+      if (!targetExists(project,i.target) || !i.text.trim()) return state;
+      const old = project.interpretations.find(x=>x.id===i.id);
+      if (old && JSON.stringify(old.target)!==JSON.stringify(i.target)) return state;
+      const saved = {...i, createdAt:old?.createdAt ?? i.createdAt, origin: 'user' as const};
+      const p = {...project, updatedAt:i.updatedAt,
+        interpretations: old ? project.interpretations.map(x=>x.id===i.id?saved:x) : [...project.interpretations,saved],
+        analyses: project.analyses.map(a=>a.id===i.target.id && i.target.kind==='analysis'
+          ? {...a,interpretationIds:[...new Set([...a.interpretationIds,i.id])]} : a)};
+      validateResultState(p,view);
+      return {...state,project:p};
+    }
+    case 'interpretation-delete': {
+      const p = {...project,updatedAt:new Date().toISOString(),
+        interpretations:project.interpretations.filter(i=>i.id!==action.id),
+        analyses:project.analyses.map(a=>a.interpretationIds.includes(action.id)
+          ? {...a,interpretationIds:a.interpretationIds.filter(id=>id!==action.id)} : a)};
+      return {...state,project:p};
+    }
     case "analysis-family":
       return { ...state, view: { ...view, analysisFamily: action.family } };
     case "association-view":
@@ -664,7 +697,9 @@ export function workspaceReducer(
       },
     };
   }
-  const next = reduceWorkspace(state, action);
+  let next = reduceWorkspace(state, action);
+  if (action.type === 'analysis-delete' || action.type === 'graph-delete')
+    next = {...next, view:cleanResultReferences(next.project,next.view)};
   if (
     next === state ||
     ![

@@ -29,6 +29,7 @@ export function DataTable({
   selectAttribute,
   edit,
   setDensity,
+  readOnly=false,
 }: {
   dataset: Dataset;
   version: DeepReadonly<DataVersion>;
@@ -45,6 +46,7 @@ export function DataTable({
   selectAttribute: (id: string) => void;
   edit: (target: EditTarget) => void;
   setDensity: (value: "compact" | "comfortable") => void;
+  readOnly?: boolean;
 }) {
   const [filterColumn, setFilterColumn] = useState(
     version.columns[0]?.id || "",
@@ -437,6 +439,7 @@ export function DataTable({
                         }
                       >
                         <button
+                          disabled={readOnly}
                           className="cell-button"
                           aria-label={`${number}행 ${column.name} 편집`}
                           title={String(row.values[column.id] ?? "빈 값")}

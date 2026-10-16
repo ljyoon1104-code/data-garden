@@ -4,7 +4,7 @@ import { preprocessingLabels, methodLabels } from "../domain/preprocessing";
 import { FittedDetails } from "./PreprocessingPanel";
 import { useEffect, useState } from "react";
 import type { ProjectLibrary } from "../persistence/useProjects";
-import { makeBackup } from "../persistence/format";
+import { makeBackup } from "../persistence/backup";
 import { createWorkspace, activeDatasets } from "../state/workspace";
 import type { WorkspaceState } from "../state/workspace";
 import type { Project, DeepReadonly, OperationRecord } from "../domain/types";

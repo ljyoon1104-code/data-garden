@@ -1,7 +1,7 @@
 {
   "name": "data-garden",
   "private": true,
-  "version": "0.9.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -10,7 +10,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "check:build": "node scripts/check-build.mjs",
-    "serve:production": "node scripts/serve-production.mjs"
+    "serve:production": "node scripts/serve-production.mjs",
+    "examples:generate": "node scripts/generate-examples.mjs"
   },
   "dependencies": {
     "echarts": "^6.1.0",

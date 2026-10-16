@@ -20,6 +20,7 @@ import { defaultTableView } from "../domain/table";
 export function useRegression(
   state: WorkspaceState,
   dispatch: (a: WorkspaceAction) => void,
+  writable = true,
 ) {
   const { project, view } = state,
     { version, dataset } = getSelection(state);
@@ -121,6 +122,7 @@ export function useRegression(
       reuseSplit: null,
     });
   const run = (requested: AnalysisConfig | null = config) => {
+    if (!writable) return;
     if (!requested?.regression) return;
     cancel();
     setError("");
@@ -265,6 +267,7 @@ export function useRegression(
     dispatch({ type: "analysis-delete", id });
   };
   return {
+    writable,
     state,
     dispatch,
     config: config as RegressionConfig | null,
