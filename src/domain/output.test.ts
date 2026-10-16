@@ -11,6 +11,8 @@ import {defaultTableView} from './table';
 import {makeBackup,readBackup,restoreAsCopy,validateWorkspace} from '../persistence/format';
 import {captureReport,prepareReport,reportHtml} from './report';
 import {JobGate} from '../workers/protocol';
+import {newGraph,normalizedGraph,calculateGraph} from './graphs';
+import {writeFileSync,mkdirSync} from 'node:fs';
 const examples=buildExamples();
 function input():Extract<ExportInput,{kind:'data'}>{const d=examples.regression.project.datasets[0];return {kind:'data',title:'한글 자료',source:{datasetId:d.id,versionId:d.versions[0].id},sourceInfo:d.source,table:d.versions[0],view:defaultTableView(),scope:'all',selectedColumns:false,sorted:false};}
 describe('interpretations and cross-dataset freshness',()=>{
@@ -90,4 +92,18 @@ describe('snapshot report, escaping and cancellation',()=>{
   it('does not change versions, operations or data undo history during export',()=>{
     const s=createWorkspace(),before=snapshot(s);prepareOutput({...input()});expect(s).toEqual(before);const c=createAnalysisRecord(examples.regression.project.analyses[0].configSnapshot as import('./types').AnalysisConfig,'new','2026-10-16T00:00:00Z');expect(c.interpretationIds).toEqual([]);expect(()=>restoreAsCopy(s)).not.toThrow();
   });
+});
+it('prepares all eight graph types with fixed conditions for image rendering',()=>{
+  let s=createWorkspace();s.project.name='[가상 검증] 8종 그래프';
+  const source=s.project.selection!,v=s.project.datasets[0].versions[0];
+  for(const kind of ['scatter','histogram','box','bar','line','pie','area','heatmap'] as const){
+    const g=newGraph(v,source);g.kind=kind;
+    Object.assign(g.visual!,{name:kind+' · 한글 검증',x:kind==='scatter'||kind==='histogram'||kind==='box'?'sleep':kind==='line'||kind==='area'?'survey-date':'commute',y:kind==='heatmap'?'grade':'reading',value:'reading',group:kind==='area'?'commute':'',aggregate:kind==='area'?'sum':'rows',unit:'검증 단위'});
+    const result=calculateGraph(v,g);g.visual!.boundaries=result.boundaries;
+    s=workspaceReducer(s,{type:'graph-save',graph:normalizedGraph(g)});
+  }
+  s.view.menu='results';s.view.report={...defaultReport(),items:s.project.graphs.map(g=>({kind:'graph',id:g.id}))};
+  const r=prepareReport(captureReport(s,s.view.report));expect(r.parts).toHaveLength(8);expect(r.parts.every(p=>p.graph?.result.marks.length)).toBe(true);
+  expect(()=>readBackup(JSON.stringify(makeBackup(s)))).not.toThrow();
+  if(process.env.GENERATE_GRAPH_CHECK==='1'){mkdirSync('tmp',{recursive:true});writeFileSync('tmp/eight-graphs.json',JSON.stringify(makeBackup(s)));}
 });

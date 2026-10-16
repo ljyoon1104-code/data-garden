@@ -36,4 +36,3 @@ export function ReportPanel({state,dispatch,onPending}:{state:WorkspaceState;dis
     {html&&<><p>생성 시점의 결과·조건·해석을 고정했습니다. 이후 변경 내용은 다시 생성해야 반영됩니다.</p><button onClick={()=>downloadFile({name:state.project.name.replace(/[<>:"/\\|?*]/g,'_')+'-보고서.html',type:'text/html;charset=utf-8',data:html})}>단일 HTML 보고서 내려받기</button><button onClick={()=>setPreview(!preview)}>인쇄용 화면 {preview?'접기':'열기'}</button>{preview&&<><p>브라우저 인쇄 대화상자에서 ‘PDF로 저장’을 선택하세요. 자동 PDF 생성은 아닙니다.</p><button onClick={()=>{frame.current?.contentWindow?.focus();frame.current?.contentWindow?.print();}}>브라우저 인쇄 / PDF로 저장</button><iframe title="인쇄용 탐구 보고서" ref={frame} srcDoc={html} sandbox="allow-same-origin allow-modals" className="report-preview"/></>}</>}
   </>}</section>;
 }
-
