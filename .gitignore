@@ -1,0 +1,21 @@
+node_modules/
+.npm-cache/
+dist/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.datagarden.json
+downloads/
+tmp/
+artifacts/
+coverage/
+*.tsbuildinfo
+# Browser verification screenshots and generated private output are not application assets.
+docs/*.jpg
+docs/*.png
+docs/*.pdf
