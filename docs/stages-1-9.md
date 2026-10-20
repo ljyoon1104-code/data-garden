@@ -125,7 +125,7 @@ node scripts/serve-production.mjs 4183
 - 실제 프로덕션 브라우저에서 이름 변경/새 프로젝트/빈 상태, 셀 편집과 undo·redo, 자료 전환 후 되돌린 버전 유지, 새로고침 복원, JSON 다운로드/사본 복원, 미지원 백업 거부, 두 탭의 저장 잠금과 선택한 탭만 업데이트를 확인했습니다.
 - **서버 중지 상태에서** 캐시로 재실행, 저장 프로젝트 복원, UTF-8 CSV와 여러 시트 XLSX 입력, 날짜/코드 원본·표시 형식, 셀 편집, Worker 통계를 확인했습니다. CSV 점수 평균 28/중앙값 30/표본 표준편차 13.038405, XLSX 점수 15·20·30의 평균 21.666667/중앙값 20/표본 표준편차 7.637626이 일치했습니다.
 - 루트와 /data/에서 앱·Worker 입력과 독립 저장을 확인했습니다. 390px 좁은 화면에서 메뉴/설정/프로젝트 관리가 작동하며 페이지 가로 넘침이 없었습니다. 설치 manifest·PNG 아이콘·전 Worker 번들 캐시는 빌드 검사에 포함합니다. **운영체제의 실제 설치 대화상자/설치 후 독립 창, 실제 디스크 용량 부족, GitHub Pages 실제 배포는 검증하지 않았습니다.**
-- 화면 증거: [데스크톱](docs/stage3-desktop.jpg), [좁은 화면](docs/stage3-mobile.jpg).
+- 화면 증거: [데스크톱](stage3-desktop.jpg), [좁은 화면](stage3-mobile.jpg).
 
 IndexedDB와 Web Locks, Service Worker는 브라우저 표준 API를 직접 사용합니다. 참고: [IndexedDB 트랜잭션](https://developer.mozilla.org/en-US/docs/Web/API/IDBDatabase/transaction), [Web Locks](https://developer.mozilla.org/en-US/docs/Web/API/Web_Locks_API), [skipWaiting](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerGlobalScope/skipWaiting), [Vite Plugin API](https://vite.dev/guide/api-plugin.html). 개발용 트랜잭션 검증에는 [fake-indexeddb](https://github.com/dumbmatter/fakeIndexedDB)를 사용하며 실행 번들에는 포함하지 않습니다.
 
@@ -168,7 +168,7 @@ IndexedDB와 Web Locks, Service Worker는 브라우저 표준 API를 직접 사�
 - **49,999행·10열(499,990셀)** 자료의 9개 수치 열을 대상으로 실제 Worker 진행 상태, 계산 중 메뉴 이동, 즉시 작업 취소, 조건 변경·자료 전환을 확인했습니다. 취소 뒤 미리보기/부분 자료/새 버전 없이 버전 2를 유지했습니다. 기기별 성능 보장은 하지 않습니다.
 - **프로덕션 서버를 완전히 중지**하고 4194 포트의 수신 서버가 없는 상태에서 캐시로 재실행했습니다. 평균 대체(112/6), 표준화, IndexedDB 저장, JSON 다운로드, Worker 복원 검증, 복원 사본 등록과 실제 기준·순서 확인을 수행했습니다. 운영체제 네트워크를 끄는 대신 서버 중지로 오프라인 실행을 검증했습니다.
 - 1366px 화면의 중앙 비교/표와 오른쪽 설정, **390px**에서 설정 이동·최빈값 미리보기·적용·비교 목록을 확인했습니다. 페이지 clientWidth=375, scrollWidth=375로 가로 넘침이 없었습니다. 콘솔에 앱 오류가 없었습니다.
-- 화면 증거: [전후 비교와 설정](docs/stage4-desktop.jpg), [좁은 설정 화면](docs/stage4-mobile.jpg). 브라우저용 작은 검증 자료: tests/fixtures/preprocessing.csv.
+- 화면 증거: [전후 비교와 설정](stage4-desktop.jpg), [좁은 설정 화면](stage4-mobile.jpg). 브라우저용 작은 검증 자료: tests/fixtures/preprocessing.csv.
 - 이번 단계에서 모든 예외 조합을 브라우저로 반복하지는 않았습니다. 날짜/불리언 고정값, 모든 이상값 처리 분기, 학습 전용 기준, 손상 백업과 누적 저장 한도의 정확한 경계는 자동 테스트로 검증했습니다. 실제 OS 설치 대화상자, 디스크 부족, GitHub Pages 배포는 검증하지 않았습니다.
 
 ## 5단계 사용 방법과 가공 규칙
@@ -220,7 +220,7 @@ IndexedDB와 Web Locks, Service Worker는 브라우저 표준 API를 직접 사�
 - 적용→되돌리기→다시 실행, 새로고침 복원, JSON 다운로드→복원 미리보기→새 사본 등록, 원인/해결 안내, 읽기 전용 탭, 저장 후 업데이트와 Worker 초기 로드 검증을 확인했습니다. 메뉴 이동 후 미리보기·선택한 작업이 유지됐습니다.
 - 프로덕션 서버를 완전히 중지하고 캐시로 재실행한 뒤 계산 열·결합·집계·IndexedDB 저장·JSON 사본 복원을 수행했습니다. 운영체제 네트워크 차단 대신 서버 중지로 검증했습니다. 정적 파일 **7개**에 새 계산/복원 Worker도 포함되며 루트와 /data/ 캐시 경로 검사가 통과했습니다.
 - **49,999행·2열** 자료의 8범주 원핫 작업에서 즉시 취소 및 조건 변경 후 이전 응답 차단을 확인했습니다. 새 자료/버전 없이 입력 버전 2를 유지했습니다. 계산 작업 중 메뉴 전환도 가능했습니다. 모든 예외 분기·최대 메모리 사용을 브라우저에서 전수 검증한 것은 아니며 큰 자료의 기기별 처리 시간은 보장하지 않습니다.
-- 390px에서 설정 이동·계산 미리보기/적용과 출처 목록 조작을 확인했습니다. 페이지 clientWidth/scrollWidth가 모두 375여서 가로 넘침이 없었습니다. 콘솔 앱 오류가 없었습니다. 화면 증거: [데스크톱](docs/stage5-desktop.jpg), [좁은 화면](docs/stage5-mobile.jpg).
+- 390px에서 설정 이동·계산 미리보기/적용과 출처 목록 조작을 확인했습니다. 페이지 clientWidth/scrollWidth가 모두 375여서 가로 넘침이 없었습니다. 콘솔 앱 오류가 없었습니다. 화면 증거: [데스크톱](stage5-desktop.jpg), [좁은 화면](stage5-mobile.jpg).
 - 모든 결합 종류/인코딩 예외/손상 백업/누적 한도 경계는 자동 테스트로 확인했으며 브라우저에서 모든 조합을 반복하지 않았습니다. OS 설치 독립 창, 실제 디스크 부족, GitHub Pages 배포는 이번에 검증하지 않았습니다.
 
 재현:
@@ -322,7 +322,7 @@ npm run check:build
 npm run serve:production -- 4196
 ~~~
 
-http://127.0.0.1:4196/ 에서 기본 샘플 또는 tests/fixtures/stage5-large.csv를 사용합니다. 개발은 npm run dev로 실행합니다. 화면 증거: [데스크톱](docs/stage6-desktop.jpg), [390px](docs/stage6-mobile.jpg).
+http://127.0.0.1:4196/ 에서 기본 샘플 또는 tests/fixtures/stage5-large.csv를 사용합니다. 개발은 npm run dev로 실행합니다. 화면 증거: [데스크톱](stage6-desktop.jpg), [390px](stage6-mobile.jpg).
 
 
 ## 7단계 — 회귀 분석
@@ -413,7 +413,7 @@ npm run check:build
 npm run serve:production -- 4197
 ~~~
 
-주소: http://127.0.0.1:4197/ (하위 경로 http://127.0.0.1:4197/data/ 도 지원). 개발은 npm run dev입니다. 재현 자료: tests/fixtures/stage7-regression.csv, stage7-cancel.csv. 화면: [데스크톱](docs/stage7-desktop.jpg), [390px](docs/stage7-mobile.jpg).
+주소: http://127.0.0.1:4197/ (하위 경로 http://127.0.0.1:4197/data/ 도 지원). 개발은 npm run dev입니다. 재현 자료: tests/fixtures/stage7-regression.csv, stage7-cancel.csv. 화면: [데스크톱](stage7-desktop.jpg), [390px](stage7-mobile.jpg).
 
 ## 다음 단계에 넘길 사항
 
