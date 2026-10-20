@@ -5,7 +5,7 @@
 - 저장소: https://github.com/ljyoon1104-code/data-garden (main)
 - 배포 주소: https://ljyoon1104-code.github.io/data-garden/ (배포 검증 결과는 docs/stage-10-verification.md)
 - 2026-10-16 실제 Pages 배포·HTTPS 실행 확인. 타입 검사·273개 테스트·빌드·캐시 검증 통과. PDF 저장·독립 HTML 열기·실제 HTTPS 오프라인/OS 설치 등 남은 수동 검증은 [검증 기록](docs/stage-10-verification.md)에 명시했습니다.
-- 이전 단계의 처리 기준과 상세 기능: [1–9단계 기록](docs/stages-1-9.md). 해당 문서의 ‘배포 전’ 문구는 당시 기록입니다.
+- 과거 개발 기록: [1~9단계 개발 당시 기록](docs/archive/stages-1-9.md). 당시 처리 기준·한도·검증 결과를 보관하며, 현재 사용법은 이 README를 따릅니다.
 
 ## 실행
 

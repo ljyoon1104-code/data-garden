@@ -19,7 +19,7 @@ coverage/
 docs/*.jpg
 docs/*.png
 docs/*.pdf
-# Images linked from docs/stages-1-9.md; reviewed synthetic verification data only.
+# Images linked from docs/archive/stages-1-9.md; reviewed synthetic verification data only.
 !docs/stage3-desktop.jpg
 !docs/stage3-mobile.jpg
 !docs/stage4-desktop.jpg
