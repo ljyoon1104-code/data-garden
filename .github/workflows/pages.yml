@@ -3,22 +3,24 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: {}
 concurrency:
   group: pages
   cancel-in-progress: false
 jobs:
-  deploy:
+  build:
+    if: >-
+      github.repository == 'ljyoon1104-code/data-garden' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
           cache: npm
@@ -27,10 +29,81 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run check:build
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+      - name: Verify Pages artifact boundary
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+          import { join, relative, resolve } from "node:path";
+
+          const root = resolve("dist");
+          assert(lstatSync(root).isDirectory() && !lstatSync(root).isSymbolicLink(), "dist must be a real directory");
+          assert.equal(relative(root, realpathSync(root)), "", "dist must not redirect");
+          const required = new Set([
+            "index.html", "sw.js", "manifest.webmanifest", "icon-192.png", "icon-512.png",
+            "examples/dates.json", "examples/regression.json", "examples/clustering.json", "examples/association.json",
+            "licenses/echarts-LICENSE.txt", "licenses/echarts-NOTICE.txt",
+            "licenses/papaparse-LICENSE.txt", "licenses/react-LICENSE.txt", "licenses/react-dom-LICENSE.txt",
+            "licenses/xlsx-LICENSE.txt", "licenses/zrender-LICENSE.txt", "licenses/pako-LICENSE.txt",
+            "licenses/saxes-LICENSE.txt", "licenses/xmlchars-LICENSE.txt",
+          ]);
+          const directories = new Set(["assets", "examples", "licenses"]);
+          const files = new Set();
+          function inspect(dir, prefix = "") {
+            for (const entry of readdirSync(dir)) {
+              const path = join(dir, entry);
+              const name = prefix + entry;
+              const stat = lstatSync(path);
+              assert(!stat.isSymbolicLink(), "Linked artifact path: " + name);
+              assert.equal(relative(path, realpathSync(path)), "", "Redirected artifact path: " + name);
+              if (stat.isDirectory()) {
+                assert(directories.has(name), "Unexpected artifact directory: " + name);
+                inspect(path, name + "/");
+              } else {
+                assert(stat.isFile() && stat.nlink === 1, "Non-regular or hard-linked artifact: " + name);
+                assert(required.has(name) || /^assets\/[A-Za-z0-9_][A-Za-z0-9_.-]*-[A-Za-z0-9_-]{8}\.(js|css)$/.test(name),
+                  "Unexpected artifact file: " + name);
+                files.add(name);
+              }
+            }
+          }
+          inspect(root);
+          for (const name of required) assert(files.has(name), "Missing artifact: " + name);
+          assert([...files].some(name => /^assets\/data\.worker-/.test(name)), "Missing Worker asset");
+          const source = readFileSync(join(root, "sw.js"), "utf8");
+          const match = source.match(/const FILES=(\[[^;]+\]);/);
+          assert(match, "Missing precache list");
+          const cached = JSON.parse(match[1]);
+          assert(Array.isArray(cached) && cached.every(name => typeof name === "string"), "Invalid precache list");
+          assert.equal(new Set(cached).size, cached.length, "Duplicate precache entries");
+          assert.equal(cached.length, files.size - 1, "Precache and artifact sizes differ");
+          for (const name of cached) assert(name !== "sw.js" && files.has(name), "Invalid precache entry: " + name);
+          for (const name of files) assert(name === "sw.js" || cached.includes(name), "Not precached: " + name);
+          console.log("Pages artifact boundary verified: " + files.size + " regular files, no unexpected paths or links.");
+          NODE
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
+
+  deploy:
+    if: >-
+      github.repository == 'ljyoon1104-code/data-garden' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      needs.build.result == 'success'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        with:
+          enablement: false
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
