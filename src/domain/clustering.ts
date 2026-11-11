@@ -211,7 +211,8 @@ export function buildClusteringPlan(
     !v.columns.some((c) => c.id === s.scope.filter!.attributeId)
   )
     fail("필터 속성이 없습니다. 범위를 다시 선택하세요.");
-  if (s.scope.rowIds.some((id) => !v.rows.some((r) => r.id === id)))
+  const availableRows = new Set(v.rows.map((row) => row.id));
+  if (s.scope.rowIds.some((id) => !availableRows.has(id)))
     fail("선택한 행이 당시 버전에 없습니다.");
   const rows = [...scopedRows(v, s.scope)].sort((a, b) =>
     a.id < b.id ? -1 : a.id > b.id ? 1 : 0,

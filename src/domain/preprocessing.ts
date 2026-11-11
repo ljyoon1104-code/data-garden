@@ -438,20 +438,18 @@ export function preprocessingLineage(
   dataset: Dataset,
   versionId: string,
 ): PreprocessingLineage {
-  const current = dataset.versions.find((v) => v.id === versionId)!;
+  const versions = new Map(dataset.versions.map((v) => [v.id, v]));
   const chain: string[] = [];
   let origin = { datasetId: dataset.id, versionId },
-    v: DeepReadonly<DataVersion> | undefined = current;
+    v = versions.get(versionId);
   while (v) {
     if (v.operation.preprocessing) {
-      chain.unshift(v.operation.id);
+      chain.push(v.operation.id);
       origin = { ...v.operation.preprocessing.input };
     }
-    v = dataset.versions.find(
-      (previous) => previous.id === v!.parentVersionIds[0],
-    );
+    v = versions.get(v.parentVersionIds[0]);
   }
-  return { origin, previousOperationIds: chain };
+  return { origin, previousOperationIds: chain.reverse() };
 }
 export function commitPreprocessing(
   table: DeepReadonly<TableData>,

@@ -51,6 +51,8 @@ import { useTask } from "./workers/useTask";
 
 import type { WorkspaceState, WorkspaceAction } from "./state/workspace";
 import { useProjects } from "./persistence/useProjects";
+import type { ProjectLibrary } from "./persistence/useProjects";
+import { ProjectAccess } from "./persistence/projectAccess";
 import { usePwa } from "./pwa/usePwa";
 import { ProjectManager } from "./components/ProjectManager";
 
@@ -89,8 +91,6 @@ const menus: { id: Menu; label: string; icon: IconName; detail: string }[] = [
 export default function App() {
   const library = useProjects(),
     pwa = usePwa();
-  const [draft, setDraft] = useState(false),
-    [busy, setBusy] = useState(false);
   if (!library.ready)
     return (
       <main className="startup" role="status">
@@ -98,6 +98,30 @@ export default function App() {
         <p>저장된 프로젝트를 읽고 검증하고 있습니다…</p>
       </main>
     );
+  return (
+    <>
+      {library.checking && (
+        <main className="startup" role={library.checkError ? "alert" : "status"}>
+          <h1>데이터뜰</h1>
+          <p>{library.checkError
+            ? "저장소 상태를 확인할 수 없습니다. 다른 데이터뜰 탭을 확인한 뒤 이 탭을 새로고침하세요."
+            : "다른 탭에서 자료를 삭제했는지 확인하고 있습니다…"}
+          </p>
+          {library.checkError && <p>{library.checkError}</p>}
+          {library.checkError && <button onClick={() => location.reload()}>이 탭 새로고침</button>}
+        </main>
+      )}
+      <div hidden={library.checking}>
+        <ProjectAccess.Provider value={library.checkAccess}>
+          <ProjectShell key={library.eraseEpoch} library={library} pwa={pwa} />
+        </ProjectAccess.Provider>
+      </div>
+    </>
+  );
+}
+function ProjectShell({ library, pwa }: { library: ProjectLibrary; pwa: ReturnType<typeof usePwa> }) {
+  const [draft, setDraft] = useState(false),
+    [busy, setBusy] = useState(false);
   return (
     <>
       <ProjectManager

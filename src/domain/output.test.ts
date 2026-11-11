@@ -1,17 +1,19 @@
-import {describe,it,expect} from 'vitest';
+import {describe,it,expect,vi} from 'vitest';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import {createWorkspace,workspaceReducer} from '../state/workspace';
 import {createAnalysisRecord,snapshot} from './model';
 import {analysisFreshness,defaultReport} from './results';
 import {buildExamples} from '../data/example-build';
-import {prepareOutput,serializeOutput,csvText,formulaString} from './export';
+import {prepareOutput,serializeOutput,csvText,formulaString,exportLimits} from './export';
 import type {ExportInput,OutputBook} from './export';
 import {defaultTableView} from './table';
 import {makeBackup,readBackup,restoreAsCopy,validateWorkspace} from '../persistence/format';
 import {captureReport,prepareReport,reportHtml} from './report';
 import {JobGate} from '../workers/protocol';
 import {newGraph,normalizedGraph,calculateGraph} from './graphs';
+import {associationConfig,defaultAssociation,runAssociation} from './association';
+import type {TableData} from './types';
 import {writeFileSync,mkdirSync} from 'node:fs';
 const examples=buildExamples();
 function input():Extract<ExportInput,{kind:'data'}>{const d=examples.regression.project.datasets[0];return {kind:'data',title:'한글 자료',source:{datasetId:d.id,versionId:d.versions[0].id},sourceInfo:d.source,table:d.versions[0],view:defaultTableView(),scope:'all',selectedColumns:false,sorted:false};}
@@ -51,17 +53,107 @@ describe('exact table and analysis file export',()=>{
     i.selectedColumns=true;expect(()=>prepareOutput(i)).toThrow(/열/);i.view.selectedColumnIds=['z'];expect(prepareOutput(i).tables[0].columns).toEqual(['입력 Z']);
   });
   it('applies sort only on request without mutating source order',()=>{const i=input();i.view.sort={attributeId:'x',direction:'desc'};expect(prepareOutput(i).tables[0].rows[0][0]).toBe(0);i.sorted=true;expect(prepareOutput(i).tables[0].rows[0][0]).toBe(39);expect(i.table.rows[0].values.x).toBe(0);});
-  it('roundtrips Korean commas, quotes, newlines, leading-zero strings and raw precision in CSV',()=>{
+  it.each([false,true])('roundtrips ordinary CSV data with formula protection set to %s',safe=>{
     const table={name:'자료',columns:['한글','값'],rows:[['쉼표, "따옴표"\n다음 줄','00123'],[1.23456789012345,null]]};
-    const text=csvText(table,false).text;expect(text.charCodeAt(0)).toBe(0xfeff);expect(Papa.parse<string[]>(text).data).toEqual([['한글','값'],['쉼표, "따옴표"\n다음 줄','00123'],['1.23456789012345','']]);
+    const {text,changed}=csvText(table,safe);
+    const expected=[['한글','값'],['쉼표, "따옴표"\n다음 줄','00123'],['1.23456789012345','']];
+    expect(text.charCodeAt(0)).toBe(0xfeff);
+    expect(changed).toBe(0);
+    expect(Papa.parse<string[]>(text,{delimiter:','}).data).toEqual(expected);
+    expect(Papa.parse<string[]>(text).data).toEqual(expected);
   });
   it('protects formula-like strings and headers, preserving negative numeric cells',()=>{
     const t={name:'a',columns:['=header'],rows:[['=1+1'],[' @SUM(A1)'],['-5'],[-5],['안전']]};const csv=csvText(t,true);expect(csv.changed).toBe(4);expect(Papa.parse<string[]>(csv.text).data[4]).toEqual(['-5']);expect(formulaString(-5)).toBe(false);expect(csvText(t,false).changed).toBe(0);
   });
+  it('detects full-width markers and invisible prefixes without normalizing the exported value',async()=>{
+    const header='\uFEFF\u200B＝열';
+    const formulas=[' \u0000＋1','\u200D－5','\uFEFF＠SUM(A1)','\u034F=1+1'];
+    const table={name:'분석',columns:[header],rows:[...formulas.map(value=>[value]),[-5],['정상']]};
+    const book:OutputBook={title:'검증',generatedAt:'2026-10-16T00:00:00Z',metadata:{},tables:[table]};
+    const [csv,info]=await serializeOutput(book,'csv',0,true);
+    expect(Papa.parse<string[]>(String(csv.data),{delimiter:','}).data)
+      .toEqual([...[header,...formulas].map(value=>["'"+value]),['-5'],['정상']]);
+    expect(JSON.parse(String(info.data)).safeStrings).toBe(5);
+    expect(table.columns).toEqual([header]);
+    expect(table.rows).toEqual([...formulas.map(value=>[value]),[-5],['정상']]);
+  });
+  it.each([';','\t','|','\x1e','\x1f'])('rejects formula exposure through alternate delimiter %j',delimiter=>{
+    const table={name:'검증',columns:['Name'+delimiter+'Score'],rows:[1,2,3].map(n=>['plain'+delimiter+'='+n+'+1'])};
+    const unprotected=csvText(table,false).text;
+    const detected=Papa.parse<string[]>(unprotected);
+    expect(detected.meta.delimiter).toBe(delimiter);
+    expect(detected.data[1]).toEqual(['plain','=1+1']);
+    expect(Papa.parse<string[]>(unprotected,{delimiter}).data[1]).toEqual(['plain','=1+1']);
+    expect(()=>csvText(table,true)).toThrow(/구분자.*XLSX/);
+    expect(()=>csvText({...table,columns:['Name'+delimiter+' \u200B"＝1+1"'],rows:[]},true)).toThrow(/XLSX/);
+
+    const ordinary={...table,rows:[['plain'+delimiter+'score']]};
+    const protectedText=csvText(ordinary,true);
+    expect(protectedText.changed).toBe(0);
+    expect(Papa.parse<string[]>(protectedText.text,{delimiter}).data).toEqual([ordinary.columns,...ordinary.rows]);
+    expect(Papa.parse<string[]>(protectedText.text).data).toEqual([ordinary.columns,...ordinary.rows]);
+  });
+  it('rejects a formula on a new line inside an otherwise ordinary value',()=>{
+    const table={name:'검증',columns:['분류','설명'],rows:[['정상','첫 줄\r\n\uFEFF\u200B=1+1\r\n마지막 줄']]};
+    expect(()=>csvText(table,true)).toThrow(/줄바꿈.*XLSX/);
+  });
+  it.each([';','\t','|','\r','\n','\r\n'])('rejects invisible full-width formulas after %j in headers and data',delimiter=>{
+    const value='plain'+delimiter+'\uFEFF\u034F\u200B"＝1+1"';
+    expect(()=>csvText({name:'검증',columns:[value],rows:[]},true)).toThrow(/XLSX/);
+    expect(()=>csvText({name:'검증',columns:['일반'],rows:[[value]]},true)).toThrow(/XLSX/);
+  });
+  it('bounds CSV dimensions before reading cell contents',()=>{
+    const original={...exportLimits};
+    const read=vi.fn(()=>{throw new Error('cell read before limit');});
+    const row:string[]=[];
+    Object.defineProperty(row,0,{get:read});
+    try {
+      exportLimits.rows=1;
+      expect(()=>csvText({name:'검증',columns:['열'],rows:[row,row]},true)).toThrow(/출력 행 한도/);
+      exportLimits.cells=1;
+      expect(()=>csvText({name:'검증',columns:['열'],rows:[row]},true)).toThrow(/출력 셀 한도/);
+      expect(()=>csvText({name:'검증',columns:['열','초과'],rows:[]},true)).toThrow(/출력 셀 한도/);
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      Object.assign(exportLimits,original);
+    }
+  });
+  it.each([false,true])('checks serialized UTF-8 bytes before constructing CSV with protection %s',safe=>{
+    const original=exportLimits.bytes;
+    const table={name:'검증',columns:['열'],rows:[['가😀"'],[-5],['=1+1']]};
+    const expected=csvText(table,safe);
+    const bytes=new TextEncoder().encode(expected.text).length;
+    const unparse=vi.spyOn(Papa,'unparse');
+    try {
+      exportLimits.bytes=bytes;
+      expect(csvText(table,safe)).toEqual(expected);
+      unparse.mockClear();
+      exportLimits.bytes=bytes-1;
+      expect(()=>csvText(table,safe)).toThrow(/CSV 파일/);
+      expect(unparse).not.toHaveBeenCalled();
+    } finally {
+      exportLimits.bytes=original;
+      unparse.mockRestore();
+    }
+  });
+  it('rejects oversized compatibility text before normalizing it',()=>{
+    const original=exportLimits.bytes;
+    const normalize=vi.spyOn(String.prototype,'normalize');
+    try {
+      exportLimits.bytes=16;
+      expect(()=>csvText({name:'검증',columns:['열'],rows:[['ﷺ'.repeat(3)]]},true)).toThrow(/CSV 파일/);
+      expect(normalize).toHaveBeenCalledTimes(1); // Only the bounded header was inspected.
+    } finally {
+      exportLimits.bytes=original;
+      normalize.mockRestore();
+    }
+  });
   it('writes explicit XLSX types without formulas and preserves code and numeric precision',async()=>{
-    const book:OutputBook={title:'가상',generatedAt:'2026-10-16T00:00:00Z',metadata:{출처:'가상'},tables:[{name:'검증',columns:['코드','숫자','불리언','문자'],rows:[['00123',1.23456789012345,true,'=1+1']]}]};
+    const book:OutputBook={title:'가상',generatedAt:'2026-10-16T00:00:00Z',metadata:{출처:'가상'},tables:[{name:'검증',columns:['코드','숫자','불리언','문자'],rows:[['00123',1.23456789012345,true,'=1+1'],['plain;=1+1',-5,null,'\uFEFF\u200B＝1+1']]}]};
     const [file]=await serializeOutput(book,'xlsx',0,true);const wb=XLSX.read(file.data,{type:'array'}),s=wb.Sheets[wb.SheetNames[0]];
     expect([s.A2.t,s.A2.v,s.B2.t,s.B2.v,s.C2.t,s.C2.v,s.D2.t,s.D2.v,s.D2.f]).toEqual(['s','00123','n',1.23456789012345,'b',true,'s','=1+1',undefined]);expect(wb.SheetNames).toContain('파일 정보');
+    expect([s.A3.t,s.A3.v,s.B3.t,s.B3.v,s.D3.t,s.D3.v]).toEqual(['s','plain;=1+1','n',-5,'s','\uFEFF\u200B＝1+1']);
+    expect(Object.values(s).filter(cell=>cell?.f!==undefined)).toEqual([]);
   });
   it('exports original model metrics, all evaluation rows and null calculation status',()=>{
     const s=examples.regression,a=s.project.analyses[1],d=s.project.datasets[0];const b=prepareOutput({kind:'analysis',title:'회귀',record:a,table:d.versions[0],sourceInfo:d.source,freshness:'과거 조건',ruleQuery:null,includeTransactions:false});
@@ -73,6 +165,49 @@ describe('exact table and analysis file export',()=>{
   });
   it('exports complete association counts, candidate nulls and optional transactions',()=>{
     const s=examples.association,a=s.project.analyses[0],d=s.project.datasets[0];const b=prepareOutput({kind:'analysis',title:'연관',record:a,table:d.versions[0],sourceInfo:d.source,freshness:'현재',ruleQuery:null,includeTransactions:true});expect(b.tables[0].rows).toHaveLength(a.association!.rules.length);expect(b.tables[2].rows).toHaveLength(6);expect(b.tables[0].rows[0][5]).toBe(6);
+  });
+  it('bounds repeated association labels before allocating rule output rows',()=>{
+    const columns:TableData['columns']=Array.from({length:8},(_,i)=>({
+      id:'c'+i,name:'항목'+i+'a'.repeat(8000),storageType:'boolean',semanticType:'categorical',description:'',useInAnalysis:true,
+    }));
+    const table:TableData={columns,rows:Array.from({length:3},(_,i)=>({
+      id:'r'+i,values:Object.fromEntries(columns.map(c=>[c.id,true])),
+    }))};
+    const source={datasetId:'synthetic',versionId:'v1'};
+    const config=associationConfig(source,{
+      ...defaultAssociation(),format:'binary',columns:columns.map(c=>c.id),
+      supportPercent:'100',confidencePercent:'100',maxLength:4,
+    });
+    const result=runAssociation({source,table},config.association);
+    expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(1024*1024);
+    const record=createAnalysisRecord(config,'synthetic-record','2026-11-10T00:00:00Z');
+    record.association=result;
+    record.status='completed';
+    const readMetric=vi.fn(()=>{throw new Error('output row was allocated before label preflight');});
+    Object.defineProperty(result.rules[0],'support',{get:readMetric});
+    expect(()=>prepareOutput({
+      kind:'analysis',title:'가상',record,table,
+      sourceInfo:{kind:'manual',label:'가상',importedAt:'2026-11-10T00:00:00Z'},
+      freshness:'현재',ruleQuery:null,includeTransactions:false,
+    })).toThrow(/반복 항목 이름/);
+    expect(readMetric).not.toHaveBeenCalled();
+  });
+  it.each(['regression','clustering','association'] as const)('uses the same header and string protection in every %s output table',async kind=>{
+    const state=kind==='regression'?examples.regression:kind==='clustering'?examples.clustering:examples.association;
+    const record=state.project.analyses[0],dataset=state.project.datasets[0];
+    const book=prepareOutput({
+      kind:'analysis',title:'검증',record,table:dataset.versions[0],sourceInfo:dataset.source,
+      freshness:'현재',ruleQuery:null,includeTransactions:true,
+    });
+    for(const [index,table] of book.tables.entries()) {
+      table.columns[0]='\uFEFF\u200B＝열';
+      if(table.rows.length) table.rows[0][0]='\u034F＝값';
+      const [file,info]=await serializeOutput(book,'csv',index,true);
+      const rows=Papa.parse<string[]>(String(file.data),{delimiter:','}).data;
+      expect(rows[0][0]).toBe("'\uFEFF\u200B＝열");
+      if(table.rows.length) expect(rows[1][0]).toBe("'\u034F＝값");
+      expect(JSON.parse(String(info.data)).safeStrings).toBeGreaterThanOrEqual(table.rows.length?2:1);
+    }
   });
 });
 describe('snapshot report, escaping and cancellation',()=>{

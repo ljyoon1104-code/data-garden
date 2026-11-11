@@ -16,9 +16,10 @@ export const exportLimits = {cells:1_000_000, rows:200_000, bytes:32*1024*1024};
 const error = (s:string):never=>{throw new Error('출력: '+s+' 범위·열·출력 표를 줄여 다시 시도하세요.');};
 const scalar = (v:unknown):Cell=> typeof v==='number'&&!Number.isFinite(v)?error('NaN·Infinity는 출력할 수 없습니다.'):v===undefined?null : v===null||typeof v==='boolean'||typeof v==='string'||(typeof v==='number'&&Number.isFinite(v))?v:JSON.stringify(v);
 function add(book:OutputBook,name:string,columns:string[],rows:unknown[][]) {
-  const table={name,columns,rows:rows.map(r=>r.map(scalar))};
-  book.tables.push(table);
-  if(book.tables.reduce((n,t)=>n+(t.rows.length+1)*t.columns.length,0)>exportLimits.cells || book.tables.reduce((n,t)=>n+t.rows.length,0)>exportLimits.rows) error('100만 셀 또는 20만 출력 행 한도입니다.');
+  const cells = book.tables.reduce((n,t)=>n+(t.rows.length+1)*t.columns.length,0) + (rows.length+1)*columns.length;
+  const count = book.tables.reduce((n,t)=>n+t.rows.length,0) + rows.length;
+  if(cells>exportLimits.cells || count>exportLimits.rows) error('100만 셀 또는 20만 출력 행 한도입니다.');
+  book.tables.push({name,columns,rows:rows.map(r=>r.map(scalar))});
 }
 export function prepareOutput(input:ExportInput, progress:(s:string)=>void=()=>{}):OutputBook {
   progress('출력 범위와 당시 조건 확인 중…');
@@ -67,6 +68,25 @@ export function prepareOutput(input:ExportInput, progress:(s:string)=>void=()=>{
       const r=a.association, names=new Map(r.prepared.items.map(i=>[i.id,`${i.label} [${i.valueType}; ${i.id}]`]));
       const label=(ids:readonly string[])=>ids.map(id=>names.get(id)).join(' ∧ ');
       const rules=input.ruleQuery?queryAssociationRules(r,input.ruleQuery):r.rules;
+      // Binary item IDs stay short even when column names are very long.
+      // Bound repeated label text before materializing thousands of output rows.
+      const nameBytes = new Map([...names].map(([id, name]) =>
+        [id, new TextEncoder().encode(name).length]));
+      let repeatedBytes = 0;
+      const reserveLabel = (ids: readonly string[]) => {
+        repeatedBytes += Math.max(0, ids.length - 1) * 5; // UTF-8 " ∧ "
+        for (const id of ids) repeatedBytes += nameBytes.get(id) ?? 0;
+        if (repeatedBytes > exportLimits.bytes)
+          error('연관 표의 반복 항목 이름이 32 MiB 한도를 넘습니다.');
+      };
+      for (const rule of rules) {
+        reserveLabel(rule.antecedent);
+        reserveLabel(rule.consequent);
+      }
+      for (const level of r.levels)
+        for (const candidate of level.candidates) reserveLabel(candidate.items);
+      if (input.includeTransactions)
+        for (const transaction of r.prepared.transactions) reserveLabel(transaction.items);
       Object.assign(book.metadata,{계산규칙:r.calculationVersion,N:String(r.prepared.transactions.length),규칙범위:input.ruleQuery?'현재 검색에 일치하는 모든 페이지':'전체 저장 규칙',검색:JSON.stringify(input.ruleQuery),탐색길이:String(r.maxLength),종료:r.termination,빈거래:String(r.prepared.emptyCount),제외:JSON.stringify(r.prepared.excluded),전체규칙:String(r.rules.length)});
       add(book,'연관규칙',['선행','후행','지지도(비율)','신뢰도(비율)','향상도','N','count(A)','count(B)','count(A∪B)','규칙 ID'],rules.map(x=>[label(x.antecedent),label(x.consequent),x.support,x.confidence,x.lift,x.n,x.countA,x.countB,x.countUnion,x.id]));
       add(book,'후보빈발집합',['길이','항목','거래수','지지도(비율)','가지치기','빈발'],r.levels.flatMap(l=>l.candidates.map(x=>[l.length,label(x.items),x.count,x.count===null?null:x.count/r.prepared.transactions.length,x.pruned,x.frequent])));
@@ -77,12 +97,69 @@ export function prepareOutput(input:ExportInput, progress:(s:string)=>void=()=>{
   if(new TextEncoder().encode(JSON.stringify(book)).length>exportLimits.bytes)error('출력 내용 32 MiB 한도입니다.');
   return book;
 }
-export const formulaString=(v:Cell)=>typeof v==='string'&&/^[\s\uFEFF]*[=+\-@\t\r]/.test(v);
+const csvFormulaStart = /^[\s\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}]*[=+\-@\t\r\n]/u;
+const csvAlternateFields = /[;\t|\r\n\x1e\x1f\u2028\u2029]([^;\t|\r\n\x1e\x1f\u2028\u2029]*)/gu;
+const csvAlternateFormulaStart = /^[\s\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}"]*[=+\-@]/u;
+
+export const formulaString = (v: Cell) =>
+  typeof v === 'string' && csvFormulaStart.test(v.normalize('NFKC'));
+
 export function csvText(table:OutputTable,safe:boolean) {
-  let changed=0;
-  const transform=(v:Cell):Cell=>{if(safe&&formulaString(v)){changed++;return "'"+v;}return v;};
-  const data=[table.columns,...table.rows].map(r=>r.map(transform));
-  return {text:'\uFEFF'+Papa.unparse(data,{newline:'\r\n'}),changed};
+  if (table.rows.length > exportLimits.rows)
+    error('20만 출력 행 한도입니다.');
+  let cells = table.columns.length;
+  if (cells > exportLimits.cells) error('100만 출력 셀 한도입니다.');
+  for (const row of table.rows) {
+    cells += row.length;
+    if (cells > exportLimits.cells) error('100만 출력 셀 한도입니다.');
+  }
+  let bytes = 3; // The UTF-8 BOM is part of the downloaded file.
+  const charge = (count: number) => {
+    bytes += count;
+    if (bytes > exportLimits.bytes) error('CSV 파일 32 MiB 한도입니다.');
+  };
+  let changed = 0;
+  const transform = (value: Cell): Cell => {
+    const text = value === null ? '' : String(value);
+    // Count UTF-8 and escaped quotes before normalization, prefix copies or
+    // Papa.unparse constructs the full CSV string.
+    if (text.length > exportLimits.bytes - bytes) error('CSV 파일 32 MiB 한도입니다.');
+    const quoted = typeof value === 'string' &&
+      (safe || /[,"\r\n\uFEFF]/.test(text) || text.startsWith(' ') || text.endsWith(' '));
+    if (quoted) charge(2);
+    for (const char of text) {
+      const code = char.codePointAt(0)!;
+      charge(code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4);
+      if (char === '"') charge(1);
+    }
+    if (!safe || typeof value !== 'string') return value;
+
+    const normalized = value.normalize('NFKC');
+    // A reader using a different delimiter may expose a formula within the cell.
+    for (const [, field] of normalized.matchAll(csvAlternateFields)) {
+      if (csvAlternateFormulaStart.test(field)) {
+        throw new Error('셀 안의 다른 구분자나 줄바꿈 뒤에 수식으로 해석될 수 있는 값이 있습니다. 원문을 유지하려면 XLSX로 내보내세요.');
+      }
+    }
+    if (!csvFormulaStart.test(normalized)) return value;
+
+    charge(1);
+    changed++;
+    return "'" + value;
+  };
+  const data = [table.columns, ...table.rows].map((row, index) => {
+    if (index) charge(2);
+    charge(Math.max(0, row.length - 1));
+    return row.map(transform);
+  });
+  return {
+    text: '\uFEFF' + Papa.unparse(data, {
+      delimiter: ',',
+      newline: '\r\n',
+      quotes: safe ? value => typeof value === 'string' : false,
+    }),
+    changed,
+  };
 }
 export async function serializeOutput(book:OutputBook,format:'csv'|'xlsx',tableIndex:number,safe:boolean):Promise<OutputFile[]> {
   const base=book.title.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').slice(0,80)||'데이터뜰';

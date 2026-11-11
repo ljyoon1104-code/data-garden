@@ -53,7 +53,11 @@ export function validateClusteringConfig(c: AnalysisConfig, p: Project) {
   if (s.scope.rowIds.some((id) => !ids.has(id))) bad("범위 행 참조");
 }
 /** Checks stored assignments/means/metrics against fixed recorded centers. Never initializes or re-runs K-means. */
-export function validateClusteringRecord(record: AnalysisRecord, p: Project) {
+export function validateClusteringRecord(
+  record: AnalysisRecord,
+  p: Project,
+  spend?: (units: number, phase: string) => void,
+) {
   if (!record.clustering) {
     if (record.status === "completed" && record.configSnapshot.clustering)
       bad("완료 결과 없음");
@@ -76,6 +80,12 @@ export function validateClusteringRecord(record: AnalysisRecord, p: Project) {
     new TextEncoder().encode(JSON.stringify(r)).byteLength > clusterLimits.bytes
   )
     bad("계산 규칙·결과 한도");
+  const source = resolveVersion(p, c.source);
+  spend?.(
+    source.rows.length * s.features.length *
+      (6 + Math.ceil(Math.log2(Math.max(1, source.rows.length)))),
+    "군집 입력 검증",
+  );
   const plan = buildClusteringPlan(p, c),
     prepared = prepareClusters(plan, s),
     x = prepared.matrix;
@@ -175,6 +185,17 @@ export function validateClusteringRecord(record: AnalysisRecord, p: Project) {
       if (best < 0 || run.sse < candidate.restarts[best].sse!) best = ri;
       dim(run.centers);
       if (
+        !Array.isArray(run.history) ||
+        run.history.length < 1 ||
+        run.history.length > s.maxIterations ||
+        run.iterations !== run.history.length
+      )
+        bad("반복 한도");
+      spend?.(
+        x.length * s.features.length * k * (3 * run.history.length + 2),
+        "군집 반복 검증",
+      );
+      if (
         !run.initialCenters &&
         run.history[0] &&
         !run.history[0].events.length
@@ -199,13 +220,6 @@ export function validateClusteringRecord(record: AnalysisRecord, p: Project) {
         bad("입력 점이 아닌 초기 중심");
       if (!run.history[0]?.events.length)
         same(run.initialCenters, run.history[0]?.before, "최초 할당 중심");
-      if (
-        !Array.isArray(run.history) ||
-        run.history.length < 1 ||
-        run.history.length > s.maxIterations ||
-        run.iterations !== run.history.length
-      )
-        bad("반복 한도");
       let prevLabels: number[] | null = null;
       run.history.forEach((h, hi) => {
         dim(h.before);
@@ -293,6 +307,7 @@ export function validateClusteringRecord(record: AnalysisRecord, p: Project) {
     });
     if (best !== candidate.bestRestart) bad("최소 SSE 재시작·동률 순서");
     same(candidate.centers, candidate.restarts[best].centers, "대표 중심");
+    spend?.(x.length * s.features.length * k, "군집 중심 검증");
     const assigned = assignClusters(x, candidate.centers),
       counts = Array(k).fill(0) as number[],
       sums = Array(k).fill(0) as number[];
@@ -347,6 +362,10 @@ export function validateClusteringRecord(record: AnalysisRecord, p: Project) {
     }
     same(sil!.evaluationRowIds, expectedEval, "실루엣 표본");
     if (sil!.reason !== null) bad("평가 이유");
+    spend?.(
+      expectedEval.length * x.length * s.features.length,
+      "군집 실루엣 검증",
+    );
     const indices = new Map(r.rowIds.map((id, i) => [id, i])),
       values = expectedEval.map(
         (id) =>

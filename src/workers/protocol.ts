@@ -131,6 +131,7 @@ export type DataTask =
       lineage: PreprocessingLineage;
     }
   | { kind: "restore"; file: File }
+  | { kind: "xlsx-sheets"; file: File }
   | { kind: "parse"; file: File; options: ImportOptions }
   | {
       kind: "register";
@@ -163,6 +164,7 @@ export type DataTaskResult =
   | { kind: "preprocess-preview"; preview: PreprocessingPreview }
   | { kind: "preprocess-commit"; version: DeepReadonly<DataVersion> | null }
   | { kind: "restore"; workspace: WorkspaceState }
+  | { kind: "xlsx-sheets"; sheets: string[] }
   | { kind: "parse"; parsed: ParsedImport }
   | { kind: "register"; dataset: Dataset }
   | { kind: "edit"; version: DeepReadonly<DataVersion> | null }

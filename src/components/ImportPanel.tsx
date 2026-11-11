@@ -31,12 +31,17 @@ export function ImportPanel({
     setColumns([]);
     setAcknowledged(false);
     setSelected(0);
+    if (/\.xlsx$/i.test(newFile.name) && !nextOptions.sheet) {
+      task.run({ kind: "xlsx-sheets", file: newFile }, (result) => {
+        if (result.kind === "xlsx-sheets") setSheets(result.sheets);
+      });
+      return;
+    }
     task.run(
       { kind: "parse", file: newFile, options: nextOptions },
       (result) => {
         if (result.kind === "parse") {
           setParsed(result.parsed);
-          setSheets(result.parsed.sheets);
           setColumns(result.parsed.proposed.columns);
           setOptions(result.parsed.options);
         }
@@ -134,9 +139,10 @@ export function ImportPanel({
                 disabled={!sheets.length}
                 onChange={(e) => change({ sheet: e.target.value })}
               >
-                {(sheets.length ? sheets : [options.sheet]).map((name) => (
+                <option value="" disabled>{sheets.length ? "미리 볼 시트를 선택하세요" : "시트 목록을 확인하세요"}</option>
+                {sheets.map((name) => (
                   <option key={name} value={name}>
-                    {name || "시트 읽는 중"}
+                    {name}
                   </option>
                 ))}
               </select>

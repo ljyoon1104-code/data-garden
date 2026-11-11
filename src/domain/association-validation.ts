@@ -125,6 +125,7 @@ export function validateAssociationConfig(
 export function validateAssociationRecord(
   record: AnalysisRecord,
   project: Project,
+  spend?: (units: number, phase: string) => void,
 ) {
   const config = record.configSnapshot as AnalysisConfig;
   validateAssociationConfig(config, project);
@@ -144,6 +145,7 @@ export function validateAssociationRecord(
   const r = record.association,
     s = config.association!;
   associationValidationBudget([record]);
+  spend?.(associationValidationCost(r), "연관 결과 검증");
   if (
     r.formatVersion !== 1 ||
     r.calculationVersion !== "apriori-1" ||

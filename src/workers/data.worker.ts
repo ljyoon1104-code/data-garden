@@ -12,7 +12,7 @@ import { previewWrangling, commitWrangling } from "../domain/wrangling";
 
 import { editVersion, inspectTable } from "../domain/table";
 import {
-  readBackup,
+  readBackupBytes,
   RESTORE_BYTES,
   validateWorkspace,
 } from "../persistence/format";
@@ -168,19 +168,28 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         progress("백업 파일의 형식·버전·참조를 검증하는 중…");
         result = {
           kind: "restore",
-          workspace: readBackup(await task.file.text(), true),
+          workspace: readBackupBytes(await task.file.arrayBuffer(), true),
         };
         break;
-      case "parse": {
-        const {parseBytes,limits}=await import("../data/import");
+      case "xlsx-sheets": {
+        const { readXlsxSheetNames, limits } = await import("../data/import");
         if (task.file.size > limits.bytes)
           throw new Error("파일이 20MB를 넘습니다. 나누어 불러오세요.");
-        progress("기기에서 파일을 읽는 중…");
-        const bytes = await task.file.arrayBuffer();
-        progress("자료와 셀 형식을 해석하는 중…");
+        progress("통합 문서의 시트 목록을 확인하는 중…");
+        result = { kind: "xlsx-sheets", sheets: await readXlsxSheetNames(await task.file.arrayBuffer()) };
+        break;
+      }
+      case "parse": {
+        const { parseCsvFile, parseXlsxBytes, limits } = await import("../data/import");
+        if (task.file.size > limits.bytes)
+          throw new Error("파일이 20MB를 넘습니다. 나누어 불러오세요.");
+        const isXlsx = /\.xlsx$/i.test(task.file.name);
+        progress(isXlsx ? "선택한 시트와 공용 셀 형식을 읽는 중…" : "CSV 행을 제한된 청크로 읽는 중…");
         result = {
           kind: "parse",
-          parsed: parseBytes(bytes, task.file.name, task.options),
+          parsed: isXlsx
+            ? await parseXlsxBytes(await task.file.arrayBuffer(), task.file.name, task.options)
+            : await parseCsvFile(task.file, task.options),
         };
         break;
       }

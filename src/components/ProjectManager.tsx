@@ -148,7 +148,7 @@ export function ProjectManager({
       setBusy(false);
     }
   };
-  const backup = () => {
+  const backup = () => library.checkAccess(() => {
     // Confirmed state only; drafts and Workers are absent from this document.
     const blob = new Blob([JSON.stringify(makeBackup(library.state))], {
       type: "application/json",
@@ -159,7 +159,7 @@ export function ProjectManager({
     link.download = `${project.name.replace(/[<>:"/\\|?*]/g, "_")}-${new Date().toISOString().slice(0, 10)}.datagarden.json`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
-  };
+  });
   const history = [...project.operations].reverse(),
     pages = Math.max(1, Math.ceil(history.length / 20));
   return (
@@ -197,7 +197,7 @@ export function ProjectManager({
         <span className="save-status" role="status">
           {library.status}
         </span>
-        <button onClick={backup} disabled={busy}>
+        <button onClick={() => void backup()} disabled={busy}>
           JSON 백업
         </button>
       </div>
@@ -205,6 +205,7 @@ export function ProjectManager({
         <p className="storage-warning">
           이 탭은 읽기 전용입니다. 다른 데이터뜰 탭을 닫고 새로고침하면 저장
           권한을 다시 확인합니다. JSON 백업은 가능합니다.
+          구버전 쓰기 탭이 남아 있으면 필요한 백업을 받은 뒤 그 탭을 닫으세요.
         </p>
       )}
       {(library.error || error) && (
@@ -424,9 +425,12 @@ export function ProjectManager({
               <details>
                 <summary>공용 PC · 사용자 자료와 설정 지우기</summary>
                 <p>
-                  이 배포 경로에 저장된 모든 프로젝트와 화면 설정을 지웁니다.
-                  앱의 오프라인 프로그램 파일은 남으며, 다른 앱의 저장소는
-                  건드리지 않습니다.
+                  이 배포 경로의 모든 프로젝트와 화면 설정을 지웁니다.
+                  수정본으로 열린 다른 탭도 이전 작업을 비웁니다.
+                  구버전 탭에는 이미 읽은 자료와 JSON 백업 기능이 남을 수 있으므로
+                  공용 PC를 떠나기 전에 반드시 닫으세요. 이미 내려받은
+                  백업·출력 파일과 앱의 오프라인 파일은 남습니다. 다른 앱의
+                  저장소는 건드리지 않습니다.
                 </p>
                 <label>
                   확인 문구: 모두 삭제

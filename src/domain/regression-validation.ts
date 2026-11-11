@@ -83,6 +83,7 @@ export function validateRegressionConfig(c: AnalysisConfig, project: Project) {
 export function validateRegressionRecord(
   record: AnalysisRecord,
   project: Project,
+  spend?: (units: number, phase: string) => void,
 ) {
   const c = record.configSnapshot as AnalysisConfig;
   validateRegressionConfig(c, project);
@@ -161,16 +162,24 @@ export function validateRegressionRecord(
     equal(expected, r.split),
     "관측 단위·seed·학습/평가 분할이 저장 조건과 다릅니다.",
   );
+  spend?.(
+    (r.split.train.length + r.split.evaluation.length) * s.features.length *
+      (12 + (s.missing === "median" ? Math.ceil(Math.log2(Math.max(1, valid.length))) : 0) +
+        (s.scaling !== "none" ? 6 : 0)),
+    "회귀 입력 검증",
+  );
+  const trainingIds = new Set(r.split.train);
+  const evaluationIds = new Set(r.split.evaluation);
   let train: TableData = {
     columns: plan.root.columns.map((c) => ({ ...c })),
     rows: plan.root.rows
-      .filter((row) => r.split.train.includes(row.id))
+      .filter((row) => trainingIds.has(row.id))
       .map((row) => ({ id: row.id, values: { ...row.values } })),
   };
   let evaluation: TableData = {
     columns: train.columns,
     rows: plan.root.rows
-      .filter((row) => r.split.evaluation.includes(row.id))
+      .filter((row) => evaluationIds.has(row.id))
       .map((row) => ({ id: row.id, values: { ...row.values } })),
   };
   const expectedSteps: FittedRegressionStep[] = [];
@@ -242,22 +251,25 @@ export function validateRegressionRecord(
       ),
     "전처리 후 학습·평가 행 참조가 다릅니다.",
   );
+  const validIds = new Set(valid.map((row) => row.id));
+  const retainedTrainingIds = new Set(r.trainRowIds);
+  const retainedEvaluationIds = new Set(r.evaluationRowIds);
   const excluded: RegressionResult["excluded"] = truth.rows
-    .filter((row) => !valid.some((v) => v.id === row.id))
+    .filter((row) => !validIds.has(row.id))
     .map((row) => ({
       rowId: row.id,
       phase: "target",
       reason: "원래 관측 정답이 결측 또는 유효한 수치가 아님",
     }));
   for (const id of r.split.train)
-    if (!r.trainRowIds.includes(id))
+    if (!retainedTrainingIds.has(id))
       excluded.push({
         rowId: id,
         phase: "training",
         reason: "공통 가공·결측 제거 정책",
       });
   for (const id of r.split.evaluation)
-    if (!r.evaluationRowIds.includes(id))
+    if (!retainedEvaluationIds.has(id))
       excluded.push({
         rowId: id,
         phase: "evaluation",
@@ -331,6 +343,7 @@ export function validateRegressionRecord(
           "트리에 순환·없는 노드 참조가 있습니다.",
         );
         seen.add(id);
+        spend?.(3 * rows.length, "회귀 트리 검증");
         const n = model.nodes[id];
         assert(
           n.id === id &&
@@ -375,6 +388,10 @@ export function validateRegressionRecord(
         "도달할 수 없는 트리 노드가 있습니다.",
       );
     }
+    const predictionWork = model.kind === "knn"
+      ? tr.length * ev.length * (s.features.length + model.k + Math.ceil(Math.log2(model.k + 1)))
+      : ev.length * (model.kind === "tree" ? s.maxDepth + 1 : s.features.length + 1);
+    spend?.(predictionWork, "회귀 모델 평가 검증");
     const rows = ev.map((row) =>
       evaluationRow(row.id, row.y, predictModel(model, row.x, tr).predicted),
     );

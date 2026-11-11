@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
-import { parseBytes, registerImport, defaultImportOptions } from "./import";
+import { parseBytes, parseXlsxBytes, registerImport, defaultImportOptions } from "./import";
 const bytes = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
 const parse = (s: string) =>
   parseBytes(bytes(s), "자료.csv", defaultImportOptions);
@@ -137,8 +137,8 @@ function workbook(date1904 = false): ArrayBuffer {
   return XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
 }
 describe("XLSX actual values and formats", () => {
-  it("lists sheets and preserves raw serials, display codes, booleans and empty cells", () => {
-    const p = parseBytes(workbook(), "수업.xlsx", defaultImportOptions);
+  it("lists sheets and preserves raw serials, display codes, booleans and empty cells", async () => {
+    const p = await parseXlsxBytes(workbook(), "수업.xlsx", defaultImportOptions);
     expect(p.sheets).toEqual(["첫 시트", "빈 시트", "둘째"]);
     const ids = p.original.columns.map((c) => c.id);
     expect(p.original.rows[0].values[ids[0]]).toBe(123);
@@ -153,29 +153,27 @@ describe("XLSX actual values and formats", () => {
     });
     expect(p.issues.length).toBeGreaterThan(0);
   });
-  it("supports sheet switching, empty sheet, actual value mode, and 1904 dates", () => {
+  it("supports sheet switching, empty sheet, actual value mode, and 1904 dates", async () => {
     const buffer = workbook();
     expect(
-      parseBytes(buffer, "수업.xlsx", {
+      (await parseXlsxBytes(buffer, "수업.xlsx", {
         ...defaultImportOptions,
         sheet: "빈 시트",
-      }).empty,
+      })).empty,
     ).toBe(true);
     expect(
-      parseBytes(buffer, "수업.xlsx", {
+      (await parseXlsxBytes(buffer, "수업.xlsx", {
         ...defaultImportOptions,
         sheet: "둘째",
-      }).proposed.rows,
+      })).proposed.rows,
     ).toHaveLength(2);
-    const raw = parseBytes(buffer, "수업.xlsx", {
+    const raw = await parseXlsxBytes(buffer, "수업.xlsx", {
       ...defaultImportOptions,
       xlsxValues: "raw",
     });
     expect(Object.values(raw.proposed.rows[0].values)[0]).toBe(123);
-    const old = parseBytes(workbook(true), "수업.xlsx", defaultImportOptions);
+    const old = await parseXlsxBytes(workbook(true), "수업.xlsx", defaultImportOptions);
     expect(Object.values(old.proposed.rows[0].values)[1]).toBe("2028-01-02");
-    expect(() =>
-      parseBytes(bytes("not xlsx"), "오류.xlsx", defaultImportOptions),
-    ).toThrow("XLSX");
+    await expect(parseXlsxBytes(bytes("not xlsx"), "오류.xlsx", defaultImportOptions)).rejects.toThrow("XLSX");
   });
 });

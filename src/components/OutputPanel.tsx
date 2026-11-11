@@ -6,6 +6,7 @@ import { analysisFreshness } from '../domain/results';
 import { defaultTableView } from '../domain/table';
 import { useTask } from '../workers/useTask';
 import { TaskStatus, ErrorNotice } from './DataControls';
+import { useProjectAccess } from '../persistence/projectAccess';
 
 export function downloadFile(file:OutputFile) {
   const blob=new Blob([typeof file.data==='string'?file.data:new Uint8Array(file.data).buffer],{type:file.type});
@@ -16,6 +17,8 @@ export function OutputPanel({state,record,onPending=()=>{}}:{state:WorkspaceStat
   const [open,setOpen]=useState(false),[scope,setScope]=useState<'all'|'filtered'|'selected'>('all'),[selectedColumns,setColumns]=useState(false),[sorted,setSorted]=useState(false),[searched,setSearched]=useState(false),[transactions,setTransactions]=useState(false),[safe,setSafe]=useState(true),[format,setFormat]=useState<'csv'|'xlsx'>('csv'),[tableIndex,setTableIndex]=useState(0);
   const [book,setBook]=useState<OutputBook|null>(null),[files,setFiles]=useState<OutputFile[]>([]);
   const task=useTask('file-output');
+  const checkAccess=useProjectAccess();
+  const download=(file:OutputFile)=>checkAccess(()=>downloadFile(file));
   const source=record?.configSnapshot.source??state.project.selection;
   const dataset=state.project.datasets.find(d=>d.id===source?.datasetId),table=dataset?.versions.find(v=>v.id===source?.versionId);
   const view=dataset?state.view.tables[dataset.id]??defaultTableView():defaultTableView();
@@ -49,9 +52,15 @@ export function OutputPanel({state,record,onPending=()=>{}}:{state:WorkspaceStat
         {record&&<p>{book.metadata.현재와의차이}</p>}
         <ul>{book.tables.map(t=><li key={t.name}>{t.name}: {t.rows.length.toLocaleString()}행 × {t.columns.length}열</li>)}</ul>
         <label>파일 형식<select value={format} onChange={e=>{setFormat(e.target.value as typeof format);setFiles([]);}}><option value="csv">CSV 한 표 + 조건 정보 JSON</option><option value="xlsx">XLSX 모든 표 + 파일 정보 시트</option></select></label>
-        {format==='csv'&&<><label>CSV 출력 표<select value={tableIndex} onChange={e=>{setTableIndex(Number(e.target.value));setFiles([]);}}>{book.tables.map((t,i)=><option key={i} value={i}>{t.name}</option>)}</select></label><label><input type="checkbox" checked={safe} onChange={e=>{setSafe(e.target.checked);setFiles([]);}}/>문자열 수식 해석 방지 (위험한 문자열 앞에 ' 추가, 숫자 음수는 유지)</label></>}
+        {format==='csv'&&<>
+          <label>CSV 출력 표<select value={tableIndex} onChange={e=>{setTableIndex(Number(e.target.value));setFiles([]);}}>{book.tables.map((t,i)=><option key={i} value={i}>{t.name}</option>)}</select></label>
+          <label><input type="checkbox" checked={safe} onChange={e=>{setSafe(e.target.checked);setFiles([]);}}/>CSV 수식 보호 (위험한 문자열 앞에 ' 추가, 숫자 음수는 유지)</label>
+          <p>{safe
+            ? '셀 안의 다른 구분자나 줄바꿈이 수식을 드러낼 수 있으면 CSV를 만들지 않습니다. 원문을 유지하려면 XLSX를 선택하세요.'
+            : '수식 보호가 꺼져 있습니다. 스프레드시트에서 이 CSV를 열면 문자열이 수식으로 실행될 수 있습니다.'}</p>
+        </>}
         <button disabled={task.busy} onClick={()=>{setFiles([]);task.run({kind:'output-file',book,format,tableIndex,safe},r=>{if(r.kind==='output-file')setFiles(r.files);});}}>파일 만들기</button>
-        {files.length>0&&<div role="status"><p>파일이 준비됐습니다. CSV는 조건 정보 파일도 함께 보관하세요. 안전 처리 개수는 정보 파일에 기록됩니다.</p>{files.map(f=><button key={f.name} onClick={()=>downloadFile(f)}>{f.name} 내려받기</button>)}</div>}
+        {files.length>0&&<div role="status"><p>파일이 준비됐습니다. CSV는 조건 정보 파일도 함께 보관하세요. 안전 처리 개수는 정보 파일에 기록됩니다.</p>{files.map(f=><button key={f.name} onClick={()=>void download(f)}>{f.name} 내려받기</button>)}</div>}
       </>}
     </div>}
   </section>;

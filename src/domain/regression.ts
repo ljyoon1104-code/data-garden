@@ -644,11 +644,11 @@ export function fitRegressionStep(
   ) as FittedWrangling;
   if (fitted.basis?.kind === "encode" && old.basis?.kind === "encode") {
     const oldBasis = old.basis;
+    const columnIds = new Map(
+      oldBasis.categories.map((category) => [JSON.stringify(category.value), category.columnId]),
+    );
     fitted.basis.categories.forEach((c) => {
-      c.columnId =
-        oldBasis.categories.find(
-          (o) => JSON.stringify(o.value) === JSON.stringify(c.value),
-        )?.columnId ?? null;
+      c.columnId = columnIds.get(JSON.stringify(c.value)) ?? null;
     });
   }
   // Fixed output IDs link saved feature selections to a train-only dictionary/boundary.

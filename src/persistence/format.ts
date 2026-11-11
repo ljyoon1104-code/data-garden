@@ -17,7 +17,7 @@ import {
 } from "../domain/regression-validation";
 import { validateGraph, calculateGraph } from "../domain/graphs";
 import { validateWranglingRecord } from "../domain/wrangling-validation";
-import { traceProcessing } from "../domain/processing";
+import { processingInputs } from "../domain/processing";
 import { validatePreprocessingRecord } from "../domain/preprocessing-validation";
 import { snapshot } from "../domain/model";
 import type { AnalysisConfig, VersionRef } from "../domain/types";
@@ -25,9 +25,11 @@ import type { WorkspaceState } from "../state/workspace";
 
 import { FORMAT } from "./backup";
 import type { Backup } from "./backup";
+import { checkBackupJson, RESTORE_BYTES, RESTORE_WORK_LIMIT, restoreBudget, restoreValueWork } from "./backup-limits";
+import { estimateWranglingWork, type WorkTable } from "./wrangling-work";
 export { FORMAT, makeBackup } from "./backup";
 export type { Backup } from "./backup";
-export const RESTORE_BYTES = 80 * 1024 * 1024;
+export { RESTORE_BYTES } from "./backup-limits";
 import { MAX_PRESERVED_CELLS } from "../domain/limits";
 export const RESTORE_CELLS = MAX_PRESERVED_CELLS;
 
@@ -407,6 +409,11 @@ function unique(values: readonly string[], where: string) {
   if (new Set(values).size !== values.length) fail(where, "중복 ID입니다.");
 }
 
+const tableWork = (table: {
+  readonly rows: readonly unknown[];
+  readonly columns: readonly unknown[];
+}) => (table.rows.length + 1) * (table.columns.length + 1);
+
 /** Schema 1 had no undo journal. Its selected version wins, other datasets use their last version. */
 export function validateWorkspace(input: unknown): WorkspaceState {
   json(input);
@@ -463,6 +470,13 @@ export function validateWorkspace(input: unknown): WorkspaceState {
   projectCheck(data.project, "프로젝트");
   viewCheck(data.view, "화면 설정");
   const p = data.project;
+  if (p.analyses.length > 50) fail("분석 기록", "50개 한도");
+  if (p.interpretations.length > 200) fail("해석 기록", "200개 한도");
+  const spend = restoreBudget();
+  spend(
+    p.datasets.length + p.operations.length + p.history.entries.length + p.graphs.length + p.analyses.length + p.interpretations.length,
+    "기록 목록",
+  );
   unique(
     p.datasets.map((d) => d.id),
     "자료",
@@ -494,7 +508,10 @@ export function validateWorkspace(input: unknown): WorkspaceState {
   const versions = new Map(
     p.datasets.flatMap((d) => d.versions.map((v) => [v.id, v] as const)),
   );
+  const datasets = new Map(p.datasets.map((d) => [d.id, d]));
+  const graphIds = new Set(p.graphs.map((g) => g.id));
   const operations = new Map(p.operations.map((o) => [o.id, o]));
+  const textWork = new WeakMap<object, number>();
   let cells = 0;
   for (const d of p.datasets) {
     if (!d.versions.length) fail(d.name, "자료 버전이 없습니다.");
@@ -502,14 +519,6 @@ export function validateWorkspace(input: unknown): WorkspaceState {
       fail(d.id, "파생 자료 최초 작업 기록이 없습니다.");
     const earlier = new Set<string>();
     for (const t of [d.original.table, ...d.versions]) {
-      unique(
-        t.columns.map((c) => c.id),
-        "열",
-      );
-      unique(
-        t.rows.map((r) => r.id),
-        "행",
-      );
       cells += t.rows.length * t.columns.length;
       if (
         t.columns.length > 200 ||
@@ -520,7 +529,11 @@ export function validateWorkspace(input: unknown): WorkspaceState {
           d.name,
           "복원 한도(전체 보존 셀 300만 개)를 초과합니다. 프로젝트를 나누세요.",
         );
+      spend(tableWork(t), "보존 버전");
+      unique(t.columns.map((c) => c.id), "열");
+      unique(t.rows.map((r) => r.id), "행");
       const cols = new Set(t.columns.map((c) => c.id));
+      let textUnits = 0;
       for (const row of t.rows) {
         if (
           Object.keys(row.values).length !== cols.size ||
@@ -529,6 +542,7 @@ export function validateWorkspace(input: unknown): WorkspaceState {
           fail(row.id, "열 참조 또는 셀 개수가 다릅니다.");
         for (const column of t.columns) {
           const value = row.values[column.id];
+          if (typeof value === "string") textUnits += value.length;
           if (
             value !== null &&
             column.storageType !== "mixed" &&
@@ -537,6 +551,11 @@ export function validateWorkspace(input: unknown): WorkspaceState {
             fail(`${row.id}/${column.id}`, "셀 값과 저장 자료형이 다릅니다.");
         }
       }
+      textWork.set(
+        t,
+        Math.ceil(textUnits / 32) + restoreValueWork(t.columns) +
+          ("operation" in t ? restoreValueWork(t.operation) : 0),
+      );
     }
     const originalRows = new Set(d.original.table.rows.map((r) => r.id)),
       originalColumns = new Set(d.original.table.columns.map((c) => c.id));
@@ -549,6 +568,10 @@ export function validateWorkspace(input: unknown): WorkspaceState {
           fail("원본 표시 형식", "행 또는 열 참조 오류입니다.");
       }
     for (const v of d.versions) {
+      spend(
+        1 + v.parentVersionIds.length + v.operation.inputVersionIds.length + v.operation.outputVersionIds.length,
+        "버전 계보와 작업 참조",
+      );
       if (
         v.datasetId !== d.id ||
         v.parentVersionIds.some((id) => !earlier.has(id))
@@ -565,17 +588,24 @@ export function validateWorkspace(input: unknown): WorkspaceState {
             JSON.stringify(v.parentVersionIds))
       )
         fail(v.id, "작업 기록과 버전이 일치하지 않습니다.");
+      const input = v.operation.preprocessing?.input;
+      const before = input && versions.get(input.versionId);
+      if (before && before.datasetId === d.id)
+        spend(
+          tableWork(before) + tableWork(v) + d.versions.length + (textWork.get(before) ?? 0),
+          "전처리 검증",
+        );
       validatePreprocessingRecord(d, v);
       earlier.add(v.id);
     }
-    if (!(d.id in p.activeVersions)) fail(d.id, "현재 버전 지정이 없습니다.");
+    if (!Object.hasOwn(p.activeVersions, d.id)) fail(d.id, "현재 버전 지정이 없습니다.");
   }
   function reference(r: VersionRef | null) {
     if (r && versions.get(r.versionId)?.datasetId !== r.datasetId)
       fail("참조", "존재하지 않는 자료 또는 버전입니다.");
   }
   for (const [datasetId, versionId] of Object.entries(p.activeVersions)) {
-    if (!p.datasets.some((d) => d.id === datasetId))
+    if (!datasets.has(datasetId))
       fail(datasetId, "없는 자료입니다.");
     if (versionId !== null) reference({ datasetId, versionId });
   }
@@ -586,6 +616,7 @@ export function validateWorkspace(input: unknown): WorkspaceState {
   )
     fail("선택", "현재 버전과 다릅니다.");
   for (const op of p.operations) {
+    spend(1 + op.inputVersionIds.length + op.outputVersionIds.length, "작업 기록");
     if (op.kind !== "wrangle" && op.wrangling)
       fail(op.id, "다른 작업에 가공 기록이 있습니다.");
     if (
@@ -598,7 +629,7 @@ export function validateWorkspace(input: unknown): WorkspaceState {
       fail(op.id, "전처리 입력·출력 또는 계산 기준이 없습니다.");
     if (op.kind !== "preprocess" && op.preprocessing)
       fail(op.id, "다른 작업에 전처리 기록이 있습니다.");
-    if (!p.datasets.some((d) => d.id === op.datasetId))
+    if (!datasets.has(op.datasetId))
       fail(op.id, "작업 대상이 없습니다.");
     unique(op.inputVersionIds, "작업 입력");
     unique(op.outputVersionIds, "작업 출력");
@@ -607,11 +638,62 @@ export function validateWorkspace(input: unknown): WorkspaceState {
       ...op.outputVersionIds,
     ].forEach((versionId) => reference({ datasetId: op.datasetId, versionId }));
   }
-  for (const d of p.datasets)
-    for (const v of d.versions) {
-      traceProcessing(p, { datasetId: d.id, versionId: v.id });
-      validateWranglingRecord(p, v);
+  // Check the whole lineage once, without recursive traversal or repeated ancestor walks.
+  const dependents = new Map<string, string[]>();
+  const pending = new Map<string, number>();
+  const ready: string[] = [];
+  for (const v of versions.values()) {
+    if (v.operation.wrangling &&
+        (!Array.isArray(v.operation.wrangling.inputs) || v.operation.wrangling.inputs.length > 2))
+      fail(v.id, "가공 입력 참조는 두 개 이하입니다.");
+    const inputs = processingInputs(v);
+    spend(1 + inputs.length, "가공 계보");
+    pending.set(v.id, inputs.length);
+    if (!inputs.length) ready.push(v.id);
+    for (const input of inputs) {
+      reference(input);
+      const children = dependents.get(input.versionId);
+      if (children) children.push(v.id);
+      else dependents.set(input.versionId, [v.id]);
     }
+  }
+  for (let i = 0; i < ready.length; i++) {
+    for (const child of dependents.get(ready[i]) ?? []) {
+      const count = pending.get(child)! - 1;
+      pending.set(child, count);
+      if (!count) ready.push(child);
+    }
+  }
+  if (ready.length !== versions.size) fail("가공 계보", "순환 참조가 있습니다.");
+  const lineageWork = new Map<string, number>();
+  const wranglingWork = new Map<string, number>();
+  const workTable = (table: {
+    readonly rows: readonly unknown[];
+    readonly columns: readonly unknown[];
+  }): WorkTable => ({
+    rows: table.rows.length,
+    columns: table.columns.length,
+    textWork: textWork.get(table) ?? 0,
+  });
+  for (const versionId of ready) {
+    const v = versions.get(versionId)!;
+    let cost = tableWork(v) + (textWork.get(v) ?? 0) + datasets.get(v.datasetId)!.versions.length;
+    if (v.operation.wrangling) {
+      const work = estimateWranglingWork(
+        v.operation.wrangling.fitted?.settings,
+        processingInputs(v).map((input) => workTable(versions.get(input.versionId)!)),
+        workTable(v),
+      );
+      wranglingWork.set(versionId, work);
+      cost += work;
+    }
+    for (const input of processingInputs(v)) cost += lineageWork.get(input.versionId)!;
+    lineageWork.set(versionId, Math.min(cost, RESTORE_WORK_LIMIT + 1));
+  }
+  for (const v of versions.values()) {
+    if (v.operation.wrangling) spend(wranglingWork.get(v.id)!, "가공 재계산");
+    validateWranglingRecord(p, v);
+  }
   for (const op of p.operations)
     if (
       op.kind === "wrangle" &&
@@ -623,7 +705,8 @@ export function validateWorkspace(input: unknown): WorkspaceState {
   if (p.history.cursor > p.history.entries.length)
     fail("기록 위치", "범위를 벗어났습니다.");
   for (const h of p.history.entries) {
-    if (!p.datasets.some((d) => d.id === h.datasetId))
+    spend(3 + h.operationIds.length, "되돌리기 기록");
+    if (!datasets.has(h.datasetId))
       fail(h.id, "기록 대상이 없습니다.");
     [h.beforeVersionId, h.afterVersionId].forEach((v) => {
       if (v) reference({ datasetId: h.datasetId, versionId: v });
@@ -664,6 +747,9 @@ export function validateWorkspace(input: unknown): WorkspaceState {
       fail("속성 참조", "없는 열입니다.");
   }
   function analysis(c: AnalysisConfig) {
+    reference(c.source);
+    const table = versions.get(c.source.versionId)!;
+    spend(tableWork(table) * (1 + c.preprocessing.steps.length), "분석 설정과 전처리 참조");
     validateRegressionConfig(c, p);
     validateClusteringConfig(c, p);
     validateAssociationConfig(c, p);
@@ -711,9 +797,11 @@ export function validateWorkspace(input: unknown): WorkspaceState {
     if (selected && !p.analyses.some((a) => a.id === selected))
       fail("회귀 선택", "없는 분석 참조");
   for (const a of p.analyses) {
-    validateRegressionRecord(a, p);
-    validateClusteringRecord(a, p);
-    validateAssociationRecord(a, p);
+    reference(a.configSnapshot.source);
+    spend(4 * lineageWork.get(a.configSnapshot.source.versionId)!, "저장 분석의 가공 계보 검증");
+    validateRegressionRecord(a, p, spend);
+    validateClusteringRecord(a, p, spend);
+    validateAssociationRecord(a, p, spend);
     analysis(a.configSnapshot as AnalysisConfig);
     if (
       a.kind !== a.configSnapshot.kind ||
@@ -751,13 +839,26 @@ export function validateWorkspace(input: unknown): WorkspaceState {
     if (selected && !p.graphs.some((g) => g.id === selected))
       fail("그래프 선택", "없는 그래프 참조");
   p.graphs.forEach((g) => {
-    const table = p.datasets
-      .find((d) => d.id === g.source.datasetId)
-      ?.versions.find((v) => v.id === g.source.versionId);
-    if (!table) fail("그래프", "없는 자료 버전");
-    validateGraph(g, table!);
+    reference(g.source);
+    const table = versions.get(g.source.versionId)!;
+    const rowIds = g.visual?.scope?.rowIds;
+    spend(
+      1 + table.rows.length + table.columns.length + (Array.isArray(rowIds) ? rowIds.length : 0),
+      "그래프 참조",
+    );
+    validateGraph(g, table);
     if (g.visual && g.kind === "histogram") {
-      const result = calculateGraph(table!, g);
+      const bins = g.visual.binMode === "count" ? g.visual.binCount : 100;
+      const sortPasses = Math.ceil(Math.log2(Math.max(1, table.rows.length)));
+      const duplicatePasses = g.visual.scope.duplicatesOnly ? 2 * table.columns.length : 0;
+      const scansText = duplicatePasses || g.visual.group || g.visual.scope.filter;
+      // Two row passes per bin, two sorts, and the scans needed to prepare the scope.
+      spend(
+        table.rows.length * (8 + 2 * bins + 2 * sortPasses + duplicatePasses) +
+          (scansText ? 2 * (textWork.get(table) ?? 0) : 0),
+        "히스토그램 재계산",
+      );
+      const result = calculateGraph(table, g);
       if (
         JSON.stringify(result.boundaries) !==
         JSON.stringify(g.visual.boundaries)
@@ -781,13 +882,13 @@ export function validateWorkspace(input: unknown): WorkspaceState {
         ? i.target.id === p.id
         : i.target.kind === "analysis"
           ? p.analyses.some((a) => a.id === i.target.id)
-          : p.graphs.some((g) => g.id === i.target.id))
+          : graphIds.has(i.target.id))
     )
       fail(i.id, "해석 대상이 없습니다.");
   for (const [datasetId, attributeId] of Object.entries(
     data.view.selectedAttributeByDataset,
   )) {
-    const d = p.datasets.find((d) => d.id === datasetId);
+    const d = datasets.get(datasetId);
     if (
       !d ||
       (attributeId &&
@@ -796,7 +897,7 @@ export function validateWorkspace(input: unknown): WorkspaceState {
       fail("선택 속성", "없는 자료 또는 열입니다.");
   }
   for (const [datasetId, t] of Object.entries(data.view.tables)) {
-    const d = p.datasets.find((d) => d.id === datasetId);
+    const d = datasets.get(datasetId);
     if (!d) fail("표 설정", "없는 자료입니다.");
     const allCols = new Set(
         d!.versions.flatMap((v) => v.columns.map((c) => c.id)),
@@ -824,10 +925,29 @@ export function validateWorkspace(input: unknown): WorkspaceState {
 
 
 export function readBackup(text: string, asCopy = false): WorkspaceState {
-  if (new Blob([text]).size > RESTORE_BYTES)
+  // UTF-8 uses at most three bytes per UTF-16 code unit.
+  if (text.length > RESTORE_BYTES ||
+      (text.length > RESTORE_BYTES / 3 && new Blob([text]).size > RESTORE_BYTES))
     throw new Error(
       "프로젝트 파일은 80 MiB 이하만 복원할 수 있습니다. 보존 버전과 JSON 복사에 필요한 메모리 한도입니다.",
     );
+  return parseBackupText(text, asCopy);
+}
+
+export function readBackupBytes(bytes: ArrayBuffer, asCopy = false): WorkspaceState {
+  if (bytes.byteLength > RESTORE_BYTES)
+    throw new Error("프로젝트 파일은 80 MiB 이하만 복원할 수 있습니다.");
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("백업 파일의 UTF-8이 손상되었습니다.");
+  }
+  return parseBackupText(text, asCopy);
+}
+
+function parseBackupText(text: string, asCopy: boolean): WorkspaceState {
+  checkBackupJson(text);
   const value: unknown = JSON.parse(text);
   shape({
     format: one(FORMAT),
@@ -835,6 +955,8 @@ export function readBackup(text: string, asCopy = false): WorkspaceState {
     exportedAt: time,
     workspace: obj,
   })(value, "백업 파일");
+  if (Object.keys(value as object).some((key) => !["format", "formatVersion", "exportedAt", "workspace"].includes(key)))
+    fail("백업 파일", "지원하지 않는 최상위 필드입니다.");
   return asCopy
     ? restoreAsCopy((value as Backup).workspace)
     : validateWorkspace((value as Backup).workspace);

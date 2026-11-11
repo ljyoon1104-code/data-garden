@@ -1,5 +1,7 @@
-import Papa from "papaparse";
 import * as XLSX from "xlsx";
+import { readXlsxSheet } from "./xlsx-import";
+export { readXlsxSheetNames } from "./xlsx-import";
+import { parseCsv, readCsvFile, type CsvRecords } from "./csv-input";
 import type {
   Attribute,
   Cell,
@@ -98,95 +100,91 @@ function excelDate(serial: number, date1904: boolean): string | null {
       : date;
   return validDate(result) ? result : null;
 }
+function checkFileSize(byteLength: number) {
+  if (!byteLength)
+    throw new Error("빈 파일입니다. 열 이름과 자료가 있는 파일을 선택하세요.");
+  if (byteLength > limits.bytes)
+    throw new Error("파일 크기가 20MB를 넘습니다. 파일을 나누어 불러오세요.");
+}
+function csvSizeCheck(options: ImportOptions) {
+  return (rows: number, width: number) => checkSize(rows, width, options.header);
+}
 export function parseBytes(
   bytes: ArrayBuffer,
   fileName: string,
   options: ImportOptions,
 ): ParsedImport {
-  if (!bytes.byteLength)
-    throw new Error("빈 파일입니다. 열 이름과 자료가 있는 파일을 선택하세요.");
-  if (bytes.byteLength > limits.bytes)
-    throw new Error("파일 크기가 20MB를 넘습니다. 파일을 나누어 불러오세요.");
+  checkFileSize(bytes.byteLength);
+  if (/\.csv$/i.test(fileName))
+    return parseImport(fileName, options, {
+      kind: "csv",
+      records: parseCsv(bytes, options, csvSizeCheck(options)),
+    });
+  throw new Error("CSV 또는 XLSX 파일만 지원합니다. 파일 형식을 확인하세요.");
+}
+export async function parseXlsxBytes(
+  bytes: ArrayBuffer,
+  fileName: string,
+  options: ImportOptions,
+): Promise<ParsedImport> {
+  checkFileSize(bytes.byteLength);
+  if (!/\.xlsx$/i.test(fileName)) throw new Error("XLSX 파일을 선택하세요.");
+  return parseImport(fileName, options, {
+    kind: "xlsx",
+    workbook: await readXlsxSheet(bytes, options.sheet, options.header),
+  });
+}
+export async function parseCsvFile(
+  file: File,
+  options: ImportOptions,
+): Promise<ParsedImport> {
+  checkFileSize(file.size);
+  if (!/\.csv$/i.test(file.name))
+    throw new Error("CSV 파일을 선택하세요.");
+  const records = await readCsvFile(file, options, csvSizeCheck(options));
+  return parseImport(file.name, options, { kind: "csv", records });
+}
+function parseImport(
+  fileName: string,
+  options: ImportOptions,
+  input: { kind: "csv"; records: CsvRecords } |
+    { kind: "xlsx"; workbook: Awaited<ReturnType<typeof readXlsxSheet>> },
+): ParsedImport {
   let matrix: Cell[][] = [];
   let normalized: Cell[][] = [];
   let sheets: string[] = [];
   const metadata: Record<string, CellInfo> = {};
   const issues: ImportIssue[] = [];
   const actualOptions = { ...options };
-  const isXlsx = /\.xlsx$/i.test(fileName);
-  if (!isXlsx && !/\.csv$/i.test(fileName))
-    throw new Error("CSV 또는 XLSX 파일만 지원합니다. 파일 형식을 확인하세요.");
-  if (!isXlsx) {
-    let text: string;
-    try {
-      text = new TextDecoder(options.encoding, { fatal: true })
-        .decode(bytes)
-        .replace(/^\uFEFF/, "");
-    } catch {
-      throw new Error(
-        "선택한 인코딩으로 읽을 수 없습니다. UTF-8 또는 EUC-KR(CP949) 설정을 바꾸어 보세요.",
-      );
-    }
-    if (!text.length) throw new Error("내용이 없는 파일입니다.");
-    const result = Papa.parse<string[]>(text, {
-      delimiter: options.delimiter,
-      header: false,
-      dynamicTyping: false,
-      skipEmptyLines: false,
+  const isXlsx = input.kind === "xlsx";
+  if (input.kind === "csv") {
+    matrix = input.records.rows;
+    const { width } = input.records;
+    let mismatchCount = 0;
+    const mismatchExamples: number[] = [];
+    const firstWidth = matrix[0]?.length;
+    matrix.forEach((record, index) => {
+      if (record.length === firstWidth) return;
+      mismatchCount++;
+      if (mismatchExamples.length < 30) mismatchExamples.push(index + 1);
     });
-    if (result.errors.length)
-      throw new Error(
-        result.errors
-          .map(
-            (e) =>
-              `CSV 레코드 ${(e.row ?? 0) + 1}: ${e.code === "MissingQuotes" ? "닫는 따옴표가 없습니다." : e.code === "InvalidQuotes" ? "따옴표 형식이 올바르지 않습니다." : e.message}`,
-          )
-          .join(" / ") + " 따옴표와 구분자를 확인하세요.",
-      );
-    matrix = result.data;
-    // A final line terminator is not a data row. Interior empty records are retained.
-    if (
-      /[\r\n]$/.test(text) &&
-      matrix.at(-1)?.length === 1 &&
-      matrix.at(-1)?.[0] === ""
-    )
-      matrix.pop();
-    let width = 0;
-    matrix.forEach((r) => {
-      width = Math.max(width, r.length);
-    });
-    checkSize(matrix.length, width, options.header);
-    const mismatches = matrix
-      .map((r, i) => (r.length !== matrix[0]?.length ? i + 1 : 0))
-      .filter(Boolean);
-    if (mismatches.length)
+    if (mismatchCount) {
+      const omitted = mismatchCount - mismatchExamples.length;
       issues.push({
-        message: `열 개수가 다른 레코드 ${mismatches.length}개: ${mismatches.slice(0, 30).join(", ")}${mismatches.length > 30 ? " 외 나머지" : ""}. 가장 넓은 ${width}열을 모두 보존하고 없는 칸만 빈 값(null)으로 채웁니다.`,
+        message: `열 개수가 다른 레코드 ${mismatchCount}개: ${mismatchExamples.join(", ")}${omitted ? ` 외 ${omitted}개(번호 안내 생략)` : ""}. 가장 넓은 ${width}열을 모두 보존하고 없는 칸만 빈 값(null)으로 채웁니다.`,
         remedy:
           "구분자 설정을 확인하거나 이 보존 방식을 확인한 뒤 불러오세요. 레코드 번호는 따옴표 안 줄바꿈을 한 행으로 센 번호입니다.",
       });
+    }
     matrix = matrix.map((r) =>
       Array.from({ length: width }, (_, i) => r[i] ?? null),
     );
     normalized = matrix.map((r) => [...r]);
   } else {
-    const signature = new Uint8Array(bytes, 0, Math.min(4, bytes.byteLength));
-    if (signature[0] !== 0x50 || signature[1] !== 0x4b)
-      throw new Error(
-        "유효한 XLSX 통합 문서가 아닙니다. Excel에서 XLSX로 다시 저장하세요.",
-      );
-    const workbook = XLSX.read(bytes, {
-      type: "array",
-      cellDates: false,
-      cellNF: true,
-      cellText: true,
-      sheetStubs: true,
-    });
-    sheets = workbook.SheetNames;
-    actualOptions.sheet = options.sheet || sheets[0] || "";
-    if (!sheets.includes(actualOptions.sheet))
-      throw new Error("선택한 시트가 없습니다. 파일을 다시 선택하세요.");
-    const sheet = workbook.Sheets[actualOptions.sheet];
+    const { workbook } = input;
+    sheets = workbook.sheets;
+    actualOptions.sheet = workbook.name;
+    const { sheet } = workbook;
     if (sheet["!ref"]) {
       const range = XLSX.utils.decode_range(sheet["!ref"]);
       checkSize(
@@ -196,7 +194,10 @@ export function parseBytes(
       );
       let dateCount = 0;
       let codeCount = 0;
-      let formulaCount = 0;
+      let invalidDates = 0;
+      const invalidDateExampleLimit = 5;
+      const invalidDateRemedy = "원본 셀 형식을 확인하거나 날짜가 아닌 의미 유형을 사용하세요.";
+      const { formulaCount } = workbook;
       for (let r = range.s.r; r <= range.e.r; r++) {
         const raw: Cell[] = [];
         const proposed: Cell[] = [];
@@ -207,13 +208,6 @@ export function parseBytes(
             throw new Error(
               `${actualOptions.sheet}!${address}: Excel 오류 값 ${cell.w || cell.v}. 오류를 수정한 뒤 다시 불러오세요.`,
             );
-          if (cell?.f) {
-            formulaCount++;
-            if (cell.v === undefined)
-              throw new Error(
-                `${address}: 계산된 값이 없는 수식입니다. Excel에서 다시 계산하고 저장하세요.`,
-              );
-          }
           const value: Cell =
             cell?.v === undefined || cell.t === "z"
               ? null
@@ -238,17 +232,14 @@ export function parseBytes(
             adjusted = display;
           if (options.xlsxValues === "smart" && typeof value === "number") {
             if (XLSX.SSF.is_date(format)) {
-              const iso = excelDate(
-                value,
-                Boolean(workbook.Workbook?.WBProps?.date1904),
-              );
-              if (!iso)
-                issues.push({
-                  message: `${address}: 날짜 일련번호 ${value}를 유효한 날짜로 바꿀 수 없어 실제 값을 유지합니다.`,
-                  remedy:
-                    "원본 셀 형식을 확인하거나 날짜가 아닌 의미 유형을 사용하세요.",
-                });
-              else {
+              const iso = excelDate(value, workbook.date1904);
+              if (!iso) {
+                if (++invalidDates <= invalidDateExampleLimit)
+                  issues.push({
+                    message: `${address}: 날짜 일련번호 ${value}를 유효한 날짜로 바꿀 수 없어 실제 값을 유지합니다.`,
+                    remedy: invalidDateRemedy,
+                  });
+              } else {
                 adjusted = iso;
                 dateCount++;
               }
@@ -262,6 +253,11 @@ export function parseBytes(
         matrix.push(raw);
         normalized.push(proposed);
       }
+      if (invalidDates > invalidDateExampleLimit)
+        issues.push({
+          message: `유효한 날짜로 바꿀 수 없는 ${invalidDates}셀 중 ${invalidDates - invalidDateExampleLimit}셀의 개별 안내를 생략했습니다. 모든 셀의 실제 값을 유지합니다.`,
+          remedy: invalidDateRemedy,
+        });
       if (dateCount || codeCount)
         issues.push({
           message: `날짜 ${dateCount}셀은 ISO 날짜 문자열, 앞자리 0 표시 코드 ${codeCount}셀은 표시 문자열로 제안했습니다. 실제 셀 값과 표시 형식은 원본에 별도 보존됩니다.`,
@@ -273,7 +269,7 @@ export function parseBytes(
           message: `수식 ${formulaCount}셀은 파일에 저장된 계산 결과를 읽습니다. 수식을 실행하거나 다시 계산하지 않습니다.`,
           remedy: "최신 값이 필요하면 Excel에서 계산·저장한 후 다시 여세요.",
         });
-      if (sheet["!merges"]?.length)
+      if (workbook.hasMerges)
         issues.push({
           message:
             "병합 셀이 있습니다. 병합 영역의 빈 칸은 채우지 않고 그대로 보존합니다.",
@@ -300,7 +296,7 @@ export function parseBytes(
     used.add(name);
     if (name !== original)
       issues.push({
-        message: `${i + 1}열 이름 ${JSON.stringify(original)} → ${JSON.stringify(name)} 제안`,
+        message: `${i + 1}열 이름 ${previewColumnName(original)} → ${previewColumnName(name)} 제안`,
         remedy:
           "빈 이름·중복 이름을 보정했습니다. 아래 열 설정에서 직접 바꿀 수 있습니다.",
       });
@@ -358,6 +354,11 @@ export function parseBytes(
     issues,
     empty,
   };
+}
+function previewColumnName(name: string) {
+  const maxUnits = 120;
+  return JSON.stringify(name.slice(0, maxUnits)) +
+    (name.length > maxUnits ? "…(긴 이름 일부 표시)" : "");
 }
 export function registerImport(
   parsed: ParsedImport,
